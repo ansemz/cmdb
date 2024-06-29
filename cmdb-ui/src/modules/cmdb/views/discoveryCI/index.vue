@@ -7,42 +7,49 @@
           ><span :style="{ color: 'rgb(195, 205, 215)' }">({{ group.ci_types.length }})</span>
         </p>
         <div
-          :class="{ 'cmdb-adc-side-item': true, 'cmdb-adc-side-item-selected': currentType === type.id }"
-          v-for="type in group.ci_types"
-          :key="type.id"
-          @click="clickSidebar(type.id)"
+          :class="{ 'cmdb-adc-side-item': true, 'cmdb-adc-side-item-selected': currentType === ciType.id }"
+          v-for="ciType in group.ci_types"
+          :key="ciType.id"
+          @click="clickSidebar(ciType.id)"
         >
           <span class="cmdb-adc-side-icon">
-            <template v-if="type.icon">
-              <img v-if="type.icon.split('$$')[2]" :src="`/api/common-setting/v1/file/${type.icon.split('$$')[3]}`" />
+            <template v-if="ciType.icon">
+              <img v-if="ciType.icon.split('$$')[2]" :src="`/api/common-setting/v1/file/${ciType.icon.split('$$')[3]}`" />
               <ops-icon
                 v-else
                 :style="{
-                  color: type.icon.split('$$')[1],
+                  color: ciType.icon.split('$$')[1],
                   fontSize: '14px',
                 }"
-                :type="type.icon.split('$$')[0]"
+                :type="ciType.icon.split('$$')[0]"
               />
             </template>
-            <span :style="{ color: '#2f54eb' }" v-else>{{ type.name[0].toUpperCase() }}</span>
+            <span :style="{ color: '#2f54eb' }" v-else>{{ ciType.name[0].toUpperCase() }}</span>
           </span>
-          <span :title="type.alias || type.name" class="cmdb-adc-side-name">{{ type.alias || type.name }}</span>
+          <span :title="ciType.alias || ciType.name" class="cmdb-adc-side-name">{{ ciType.alias || ciType.name }}</span>
         </div>
       </div>
     </template>
     <template #two>
       <div id="discovery-ci">
-        <a-input-search
-          :placeholder="$t('cmdb.components.pleaseSearch')"
-          :style="{ width: '200px', marginRight: '20px', marginBottom: '10px' }"
-          @search="handleSearch"
-          allowClear
-        />
-        <div class="ops-list-batch-action" :style="{ marginBottom: '10px' }" v-show="!!selectedRowKeys.length">
-          <span @click="batchAccept">{{ $t('cmdb.ad.accept') }}</span>
-          <a-divider type="vertical" />
-          <span @click="batchDelete">{{ $t('delete') }}</span>
-          <span>{{ $t('cmdb.ci.selectRows', { rows: selectedRowKeys.length }) }}</span>
+        <AdcCounter :typeId="currentType" />
+        <div class="discovery-ci-header">
+          <a-input-search
+            :placeholder="$t('cmdb.components.pleaseSearch')"
+            :style="{ width: '200px', marginRight: '20px' }"
+            @search="handleSearch"
+            allowClear
+          />
+          <span class="ops-list-batch-action" v-show="selectedCount">
+            <span @click="batchAccept">{{ $t('cmdb.ad.accept') }}</span>
+            <a-divider type="vertical" />
+            <span @click="batchDelete">{{ $t('delete') }}</span>
+            <span>{{ $t('cmdb.ci.selectRows', { rows: selectedCount }) }}</span>
+          </span>
+          <div @click="clickLog" class="discovery-ci-log">
+            <ops-icon type="a-cmdb-log1" />
+            <span>{{ $t('cmdb.ad.log') }}</span>
+          </div>
         </div>
         <ops-table
           show-overflow
@@ -51,7 +58,7 @@
           ref="xTable"
           size="mini"
           stripe
-          class="ops-stripe-table"
+          class="ops-stripe-table checkbox-hover-table"
           :data="filterTableData"
           :height="tableHeight"
           :scroll-y="{ enabled: true, gt: 50 }"
@@ -62,56 +69,79 @@
           :checkbox-config="{ reserve: true, highlight: true, range: true }"
           :sort-config="{ remote: false, trigger: 'cell' }"
         >
-          <vxe-column align="center" type="checkbox" width="60"></vxe-column>
           <vxe-column
-            v-for="col in columns"
-            :key="col.field"
+            align="center"
+            type="checkbox"
+            width="60"
+            fixed="left"
+          >
+            <template #default="{row}">
+              {{ getRowSeq(row) }}
+            </template>
+          </vxe-column>
+          <vxe-column
+            v-for="(col, index) in columns"
+            :key="`${col.field}_${index}`"
             :title="col.title"
             :field="col.field"
             :width="col.width"
             :sortable="col.sortable"
           >
-            <template v-if="col.value_type === '6'" #default="{row}">
-              <span v-if="col.value_type === '6' && row[col.field]">{{ row[col.field] }}</span>
-            </template>
-          </vxe-column>
-          <vxe-column
-            align="center"
-            field="is_accept"
-            :title="$t('cmdb.ad.isAccept')"
-            v-bind="columns.length ? { width: '100px' } : { minWidth: '100px' }"
-            :filters="[
-              { label: $t('yes'), value: true },
-              { label: $t('no'), value: false },
-            ]"
-          >
-            <template #default="{row}">
-              {{ row.is_accept ? $t('yes') : $t('no') }}
+            <template v-if="col.value_type === '6' || col.is_password" #default="{row}">
+              <PasswordField
+                v-if="col.is_password"
+                :password="row[col.field]"
+              />
+              <span
+                v-else-if="col.value_type === '6' && row[col.field]"
+              >
+                {{ row[col.field] }}
+              </span>
             </template>
           </vxe-column>
           <vxe-column
             field="accept_by"
             :title="$t('cmdb.ad.acceptBy')"
             v-bind="columns.length ? { width: '80px' } : { minWidth: '80px' }"
-            :filters="[]"
+            :filters="acceptByFilters"
           ></vxe-column>
+          <vxe-column
+            align="center"
+            field="is_accept"
+            :title="$t('cmdb.ad.isAccept')"
+            v-bind="columns.length ? { width: '80px' } : { minWidth: '80px' }"
+            :filters="[
+              { label: $t('yes'), value: true },
+              { label: $t('no'), value: false },
+            ]"
+            fixed="right"
+          >
+            <template #default="{row}">
+              <ops-icon
+                :type="row.is_accept ? 'cmdb-warehousing' : 'cmdb-not_warehousing'"
+                :style="{ color: row.is_accept ? '#00B42A' : '#A5A9BC' }"
+              />
+            </template>
+          </vxe-column>
           <vxe-column
             field="accept_time"
             :title="$t('cmdb.ad.acceptTime')"
             sortable
-            v-bind="columns.length ? { width: '130px' } : { minWidth: '130px' }"
+            v-bind="columns.length ? { width: '150px' } : { minWidth: '150px' }"
+            fixed="right"
           ></vxe-column>
           <vxe-column
             :title="$t('operation')"
             v-bind="columns.length ? { width: '60px' } : { minWidth: '60px' }"
             align="center"
+            fixed="right"
           >
             <template #default="{row}">
               <a-space>
                 <a-tooltip :title="$t('cmdb.ad.accept')">
-                  <a v-if="!row.is_accept" @click="accept(row)"><ops-icon type="icon-xianxing-edit"/></a>
+                  <a v-if="!row.is_accept" @click="accept(row)"><ops-icon type="cmdb-manual_warehousing"/></a>
                 </a-tooltip>
-                <a :style="{ color: 'red' }" @click="deleteADC(row)"><ops-icon type="icon-xianxing-delete"/></a>
+                <a :style="{ color: 'red' }" @click="deleteADC(row)"><a-icon type="delete"/></a>
               </a-space>
             </template>
           </vxe-column>
@@ -122,6 +152,23 @@
             </div>
           </template>
         </ops-table>
+
+        <a-modal
+          v-model="logModalVisible"
+          :footer="null"
+          :width="596"
+        >
+          <div class="log-modal-title">{{ $t('cmdb.ad.log') }}</div>
+          <p ref="logModelText" class="log-modal-text">
+            <span
+              v-for="(item, index) in logTextArray"
+              :key="index"
+              class="log-modal-text-item"
+            >
+              {{ item }}
+            </span>
+          </p>
+        </a-modal>
       </div>
     </template>
   </TwoColumnLayout>
@@ -131,11 +178,26 @@
 import _ from 'lodash'
 import XEUtils from 'xe-utils'
 import TwoColumnLayout from '@/components/TwoColumnLayout'
-import { getADCCiTypes, getAdc, updateADCAccept, getADCCiTypesAttrs, deleteAdc } from '../../api/discovery'
+import AdcCounter from './components/adcCounter.vue'
+import PasswordField from './components/passwordField.vue'
+
+import {
+  getADCCiTypes,
+  getAdc,
+  updateADCAccept,
+  getADCCiTypesAttrs,
+  deleteAdc,
+  getAdcExecHistories
+} from '../../api/discovery'
 import { getCITableColumns } from '../../utils/helper'
+
 export default {
   name: 'DiscoveryCI',
-  components: { TwoColumnLayout },
+  components: {
+    TwoColumnLayout,
+    AdcCounter,
+    PasswordField
+  },
   data() {
     return {
       ci_types_list: [],
@@ -145,6 +207,10 @@ export default {
       columns: [],
       selectedRowKeys: [],
       searchValue: '',
+      logModalVisible: false,
+      logTextArray: [],
+      acceptByFilters: [],
+      selectedCount: 0,
     }
   },
   computed: {
@@ -152,7 +218,7 @@ export default {
       return this.$store.state.windowHeight
     },
     tableHeight() {
-      return this.windowHeight - 140
+      return this.windowHeight - 240
     },
     filterTableData() {
       const { searchValue } = this
@@ -169,7 +235,7 @@ export default {
         return rest
       }
       return this.tableData
-    },
+    }
   },
   watch: {
     currentType: {
@@ -178,6 +244,13 @@ export default {
         if (newValue) {
           localStorage.setItem('ops_adc_typeid', newValue)
         }
+      },
+    },
+    selectedRowKeys: {
+      deep: true,
+      immediate: true,
+      handler(selectedRowKeys) {
+        this.selectedCount = selectedRowKeys.length
       },
     },
   },
@@ -213,18 +286,20 @@ export default {
         if ($table) {
           const nameColumn = $table.getVxetableRef().getColumnByField('accept_by')
           if (nameColumn) {
+            const acceptByFilters = _.uniqBy(
+              res.result
+                .filter((item) => item.accept_by)
+                .map((item) => ({
+                  value: item.accept_by,
+                  label: item.accept_by,
+                })),
+              'value'
+            )
             $table.getVxetableRef().setFilter(
               nameColumn,
-              _.uniqBy(
-                res.result
-                  .filter((item) => item.accept_by)
-                  .map((item) => ({
-                    value: item.accept_by,
-                    label: item.accept_by,
-                  })),
-                'value'
-              )
+              acceptByFilters
             )
+            this.acceptByFilters = acceptByFilters
           }
         }
         this.tableData = res.result.map((item) => ({ ..._.cloneDeep(item), ...item.instance }))
@@ -302,12 +377,36 @@ export default {
         onCancel() {},
       })
     },
-    onSelectChange({ records, checked, row }) {
+    onSelectChange({ records, checked }) {
       this.selectedRowKeys = records.map((item) => item.id)
     },
     handleSearch(value) {
       this.searchValue = value
     },
+
+    async clickLog() {
+      this.logModalVisible = true
+      const logRes = await getAdcExecHistories({
+        type_id: this.currentType,
+        page_size: 1000
+      })
+      let logTextArray = []
+      if (logRes?.result?.length) {
+        logTextArray = logRes.result.map((log) => {
+          return `[${log.created_at}] ${log.stdout}`
+        })
+      }
+      this.logTextArray = logTextArray
+      this.$nextTick(() => {
+        const textEl = this.$refs.logModelText
+        if (textEl) {
+          textEl.scrollTop = textEl.scrollHeight
+        }
+      })
+    },
+    getRowSeq(row) {
+      return this.$refs.xTable.getVxetableRef().getRowSeq(row)
+    }
   },
 }
 </script>
@@ -349,6 +448,79 @@ export default {
   .cmdb-adc-side-item-selected {
     .ops_popover_item_selected();
     background-color: @primary-color_3;
+  }
+
+  .discovery-ci-header {
+    display: flex;
+    align-items: center;
+    padding-top: 18px;
+    padding-bottom: 10px;
+  }
+
+  .discovery-ci-log {
+    cursor: pointer;
+    background-color: #F4F9FF;
+    border: solid 1px @primary-color_8;
+    color: @primary-color;
+    font-size: 12px;
+    padding: 5px 12px;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .checkbox-hover-table {
+    /deep/ .vxe-table--body-wrapper {
+      .vxe-checkbox--label {
+        display: inline;
+        padding-left: 0px !important;
+        color: #bfbfbf;
+      }
+
+      .vxe-icon-checkbox-unchecked {
+        display: none;
+      }
+
+      .vxe-icon-checkbox-checked ~ .vxe-checkbox--label {
+        display: none;
+      }
+
+      .vxe-cell--checkbox {
+        &:hover {
+          .vxe-icon-checkbox-unchecked {
+            display: inline;
+          }
+
+          .vxe-checkbox--label {
+            display: none;
+          }
+        }
+      }
+    }
+  }
+}
+
+.log-modal-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.log-modal-text {
+  margin-top: 14px;
+  padding: 12px;
+  width: 100%;
+  height: 312px;
+  overflow: auto;
+  border: solid 1px @border-color-base;
+  background-color: #2f333d;
+
+  &-item {
+    color: #c5c8c6;
+    width: 100%;
+    display: block;
+    white-space: pre-wrap;
+    word-break: break-all;
   }
 }
 </style>

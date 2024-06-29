@@ -1,68 +1,46 @@
 <template>
-  <div>
-    <a-select v-if="ruleType === 'http'" :style="{ marginBottom: '10px' }" v-model="currentCate">
-      <a-select-option v-for="cate in categories" :key="cate" :value="cate">{{ cate }}</a-select-option>
-    </a-select>
-    <vxe-table
-      size="mini"
-      stripe
-      class="ops-stripe-table"
-      show-overflow
-      keep-source
-      ref="xTable"
-      resizable
-      :data="tableData"
-      :edit-config="isEdit ? { trigger: 'click', mode: 'cell' } : {}"
-    >
-      <template v-if="isEdit">
-        <vxe-colgroup :title="$t('cmdb.ciType.autoDiscovery')">
-          <vxe-column field="name" :title="$t('name')" width="100"> </vxe-column>
-          <vxe-column field="type" :title="$t('type')" width="80"> </vxe-column>
-          <vxe-column field="example" :title="$t('cmdb.components.example')">
-            <template #default="{row}">
-              <span v-if="row.type === 'json'">{{ JSON.stringify(row.example) }}</span>
-              <span v-else>{{ row.example }}</span>
-            </template>
-          </vxe-column>
-          <vxe-column field="desc" :title="$t('desc')"> </vxe-column>
-        </vxe-colgroup>
-        <vxe-colgroup :title="$t('cmdb.ciType.attributes')">
-          <vxe-column field="attr" :title="$t('name')" :edit-render="{}">
-            <template #default="{row}">
-              {{ row.attr }}
-            </template>
-            <template #edit="{ row }">
-              <vxe-select
-                filterable
-                clearable
-                v-model="row.attr"
-                type="text"
-                :options="ciTypeAttributes"
-                transfer
-              ></vxe-select>
-            </template>
-          </vxe-column>
-        </vxe-colgroup>
-      </template>
-      <template v-else>
-        <vxe-column field="name" :title="$t('name')" width="100"> </vxe-column>
-        <vxe-column field="type" :title="$t('type')" width="80"> </vxe-column>
-        <vxe-column field="example" :title="$t('cmdb.components.example')">
-          <template #default="{row}">
-            <span v-if="row.type === 'object'">{{ JSON.stringify(row.example) }}</span>
-            <span v-else>{{ row.example }}</span>
-          </template>
-        </vxe-column>
-        <vxe-column field="desc" :title="$t('desc')"> </vxe-column>
-      </template>
-    </vxe-table>
+  <div class="http-snmp-ad">
+    <HttpADCategory
+      v-if="!isEdit && isCloud"
+      :categories="categories"
+      :currentCate="currentCate"
+      :tableData="tableData"
+      :ruleType="ruleType"
+      @clickCategory="setCurrentCate"
+    />
+    <template v-else>
+      <a-select v-if="isCloud" :style="{ marginBottom: '10px', minWidth: '120px' }" v-model="currentCate">
+        <a-select-option v-for="cate in categoriesSelect" :key="cate" :value="cate">{{ cate }}</a-select-option>
+      </a-select>
+      <AttrMapTable
+        v-if="isEdit"
+        ref="attrMapTable"
+        :ruleType="ruleType"
+        :tableData="tableData"
+        :ciTypeAttributes="ciTypeAttributes"
+        :uniqueKey="uniqueKey"
+      />
+      <ADPreviewTable
+        v-else
+        :tableData="tableData"
+      />
+    </template>
   </div>
 </template>
 
 <script>
 import { getHttpCategories, getHttpAttributes, getSnmpAttributes } from '../../api/discovery'
+import AttrMapTable from '@/modules/cmdb/components/attrMapTable/index.vue'
+import ADPreviewTable from './adPreviewTable.vue'
+import HttpADCategory from './httpADCategory.vue'
+
 export default {
   name: 'HttpSnmpAD',
+  components: {
+    AttrMapTable,
+    ADPreviewTable,
+    HttpADCategory
+  },
   props: {
     ruleName: {
       type: String,
@@ -88,10 +66,15 @@ export default {
       type: Number,
       default: 0,
     },
+    uniqueKey: {
+      type: String,
+      default: '',
+    }
   },
   data() {
     return {
       categories: [],
+      categoriesSelect: [],
       currentCate: '',
       tableData: [],
     }
@@ -107,15 +90,20 @@ export default {
         腾讯云: { name: 'tencentcloud' },
         华为云: { name: 'huaweicloud' },
         AWS: { name: 'aws' },
+        VCenter: { name: 'vcenter' },
+        KVM: { name: 'kvm' },
       }
     },
+    isCloud() {
+      return ['http', 'private_cloud'].includes(this.ruleType)
+    }
   },
   watch: {
     currentCate: {
       immediate: true,
       handler(newVal) {
         if (newVal) {
-          getHttpAttributes(this.httpMap[`${this.ruleName}`].name, { category: newVal }).then((res) => {
+          getHttpAttributes(this.ruleName, { resource: newVal }).then((res) => {
             if (this.isEdit) {
               this.formatTableData(res)
             } else {
@@ -131,8 +119,8 @@ export default {
         this.currentCate = ''
         this.$nextTick(() => {
           const { ruleType, ruleName } = newVal
-          if (ruleType === 'snmp' && ruleName) {
-            getSnmpAttributes(ruleName).then((res) => {
+          if (['snmp', 'components'].includes(ruleType) && ruleName) {
+            getSnmpAttributes(ruleType, ruleName).then((res) => {
               if (this.isEdit) {
                 this.formatTableData(res)
               } else {
@@ -140,11 +128,19 @@ export default {
               }
             })
           }
-          if (ruleType === 'http' && ruleName) {
-            getHttpCategories(this.httpMap[`${this.ruleName}`].name).then((res) => {
+
+          if (this.isCloud && ruleName) {
+            getHttpCategories(this.ruleName).then((res) => {
               this.categories = res
-              if (res && res.length) {
-                this.currentCate = res[0]
+              const categoriesSelect = []
+              res.forEach((category) => {
+                if (category?.items?.length) {
+                  categoriesSelect.push(...category.items)
+                }
+              })
+              this.categoriesSelect = categoriesSelect
+              if (this.isEdit && categoriesSelect?.length) {
+                this.currentCate = categoriesSelect[0]
               }
             })
           }
@@ -181,12 +177,16 @@ export default {
       })
     },
     getTableData() {
-      const $table = this.$refs.xTable
+      const $table = this.$refs.attrMapTable
       const { fullData } = $table.getTableData()
       return fullData || []
-    },
+    }
   },
 }
 </script>
 
-<style></style>
+<style>
+.http-snmp-ad {
+  height: 100%;
+}
+</style>

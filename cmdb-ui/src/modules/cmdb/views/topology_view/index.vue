@@ -32,8 +32,11 @@
               ghost
               @click="handleClickAddGroup"
               class="ops-button-ghost"
-            ><ops-icon type="veops-increase" />{{ $t('cmdb.ciType.group') }}</a-button
+              v-if="permissions.includes('admin') || permissions.includes('cmdb_admin')"
             >
+              <ops-icon type="veops-increase" />
+              {{ $t('cmdb.ciType.group') }}
+            </a-button>
           </div>
           <draggable class="topo-left-content" :list="computedTopoGroups" @end="handleChangeGroups" filter=".undraggable">
             <div v-for="group in computedTopoGroups" :key="group.id || group.name">
@@ -56,16 +59,16 @@
                 <a-space>
                   <a-tooltip>
                     <template slot="title">{{ $t('cmdb.topo.addTopoViewInGroup') }}</template>
-                    <a><ops-icon type="veops-increase" @click="handleCreate(group)"/></a>
+                    <a v-if="permissions.includes('admin') || permissions.includes('cmdb_admin')"><ops-icon type="veops-increase" @click="handleCreate(group)"/></a>
                   </a-tooltip>
                   <template v-if="group.id">
                     <a-tooltip >
                       <template slot="title">{{ $t('cmdb.ciType.editGroup') }}</template>
-                      <a><a-icon type="edit" @click="handleEditGroup(group)"/></a>
+                      <a v-if="permissions.includes('admin') || permissions.includes('cmdb_admin')"><a-icon type="edit" @click="handleEditGroup(group)"/></a>
                     </a-tooltip>
                     <a-tooltip>
                       <template slot="title">{{ $t('cmdb.ciType.deleteGroup') }}</template>
-                      <a :style="{color: 'red'}"><a-icon type="delete" @click="handleDeleteGroup(group)"/></a>
+                      <a v-if="permissions.includes('admin') || permissions.includes('cmdb_admin')" :style="{color: 'red'}"><a-icon type="delete" @click="handleDeleteGroup(group)"/></a>
                     </a-tooltip>
                   </template>
                 </a-space>
@@ -157,7 +160,9 @@
                         class="relation-graph-node-icon"
                       />
                     </template>
-                    <span class="relation-graph-node-text">{{ node.text }}</span>
+                    <span class="relation-graph-node-text">
+                      {{ node.data.btnType === 'more' ? $t('cmdb.topo.moreBtn', { count: node.text }) : node.text }}
+                    </span>
                   </div>
                 </template>
                 <template #graph-plug>
@@ -957,7 +962,7 @@ export default {
         const id = uuidv4()
         jsonData.nodes.set(id, {
           id,
-          text: `展示更多(${childs.length - showNodeCount})`,
+          text: childs.length - showNodeCount,
           data: {
             btnType: 'more'
           },
@@ -1005,7 +1010,7 @@ export default {
           if (showNodeCount === childs.length) {
             moreBtnNode.isHide = true
           } else {
-            moreBtnNode.text = `展示更多(${childs.length - showNodeCount})`
+            moreBtnNode.text = childs.length - showNodeCount
           }
         }
 
@@ -1252,9 +1257,12 @@ export default {
           'download image': '下载图片'
         }
 
-        toolbarElements.forEach((toolbarElement) => {
-          if (toolbarElement?.children?.length) {
-            toolbarElement.children.forEach((node) => {
+        const toolbarElementArray = Array.from(toolbarElements ?? [])
+        toolbarElementArray.forEach((toolbarElement) => {
+          const childArray = Array.from(toolbarElement?.children || [])
+
+          if (childArray?.length) {
+            childArray.forEach((node) => {
               const oldTitle = node?.getAttribute('title')
               if (oldTitle) {
                 const newTitle = lang === 'en' ? zhlangMap[oldTitle] : enlangMap[oldTitle]
@@ -1441,7 +1449,7 @@ export default {
   border-width: 2px;
   border-style: solid;
   background-color: transparent;
-  position: relative;
+  position: relative !important;
   display: flex;
   justify-content: center;
   align-items: center;

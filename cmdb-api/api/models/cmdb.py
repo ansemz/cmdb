@@ -566,18 +566,27 @@ class AutoDiscoveryCIType(Model):
 
     attributes = db.Column(db.JSON)  # {ad_key: cmdb_key}
 
-    relation = db.Column(db.JSON)  # [{ad_key: {type_id: x, attr_id: x}}]
+    relation = db.Column(db.JSON)  # [{ad_key: {type_id: x, attr_id: x}}], CMDB > 2.4.5: deprecated
 
     auto_accept = db.Column(db.Boolean, default=False)
 
     agent_id = db.Column(db.String(8), index=True)
     query_expr = db.Column(db.Text)
 
-    interval = db.Column(db.Integer)  # seconds
+    interval = db.Column(db.Integer)  # seconds, > 2.4.5: deprecated
     cron = db.Column(db.String(128))
 
     extra_option = db.Column(db.JSON)
     uid = db.Column(db.Integer, index=True)
+
+
+class AutoDiscoveryCITypeRelation(Model):
+    __tablename__ = "c_ad_ci_type_relations"
+
+    ad_type_id = db.Column(db.Integer, db.ForeignKey('c_ci_types.id'), nullable=False)
+    ad_key = db.Column(db.String(128))
+    peer_type_id = db.Column(db.Integer, db.ForeignKey('c_ci_types.id'), nullable=False)
+    peer_attr_id = db.Column(db.Integer, db.ForeignKey('c_attributes.id'), nullable=False)
 
 
 class AutoDiscoveryCI(Model):
@@ -593,6 +602,36 @@ class AutoDiscoveryCI(Model):
     is_accept = db.Column(db.Boolean, default=False)
     accept_by = db.Column(db.String(64), index=True)
     accept_time = db.Column(db.DateTime)
+
+
+class AutoDiscoveryRuleSyncHistory(Model2):
+    __tablename__ = "c_ad_rule_sync_histories"
+
+    adt_id = db.Column(db.Integer, db.ForeignKey('c_ad_ci_types.id'))
+    oneagent_id = db.Column(db.String(8))
+    oneagent_name = db.Column(db.String(64))
+    sync_at = db.Column(db.DateTime, default=datetime.datetime.now())
+
+
+class AutoDiscoveryExecHistory(Model2):
+    __tablename__ = "c_ad_exec_histories"
+
+    type_id = db.Column(db.Integer, index=True)
+    stdout = db.Column(db.Text)
+
+
+class AutoDiscoveryCounter(Model2):
+    __tablename__ = "c_ad_counter"
+
+    type_id = db.Column(db.Integer, index=True)
+    rule_count = db.Column(db.Integer, default=0)
+    exec_target_count = db.Column(db.Integer, default=0)
+    instance_count = db.Column(db.Integer, default=0)
+    accept_count = db.Column(db.Integer, default=0)
+    this_month_count = db.Column(db.Integer, default=0)
+    this_week_count = db.Column(db.Integer, default=0)
+    last_month_count = db.Column(db.Integer, default=0)
+    last_week_count = db.Column(db.Integer, default=0)
 
 
 class CIFilterPerms(Model):
