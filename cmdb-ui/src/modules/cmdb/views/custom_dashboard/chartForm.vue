@@ -362,6 +362,7 @@ export default {
       commonAttributes: [],
       level2children: {},
       isShadow: false,
+      changeCITypeRequestValue: null,
     }
   },
   computed: {
@@ -406,7 +407,7 @@ export default {
       this.visible = true
       this.type = type
       this.item = item
-      const { category = 0, name, type_id, attr_id, level } = item
+      const { category = 0, name, type_id, level } = item
       const chartType = (item.options || {}).chartType || 'count'
       const fontColor = (item.options || {}).fontColor || '#ffffff'
       const bgColor = (item.options || {}).bgColor || ['#6ABFFE', '#5375EB']
@@ -425,6 +426,14 @@ export default {
         this.fontColor = fontColor
         this.bgColor = bgColor
       }
+
+      if (type_ids?.length || type_id) {
+        const requireTypeIds = type_id ? [type_id] : type_ids
+        await getCITypeAttributesByTypeIds({ type_ids: requireTypeIds.join(',') }).then((res) => {
+          this.attributes = res.attributes
+        })
+      }
+
       if (type_ids && type_ids.length) {
         await getCITypeAttributesByTypeIds({ type_ids: type_ids.join(',') }).then((res) => {
           this.attributes = res.attributes
@@ -483,19 +492,26 @@ export default {
     changeCIType(value) {
       this.form.attr_ids = []
       this.commonAttributes = []
+      this.changeCITypeRequestValue = value
       if ((Array.isArray(value) && value.length) || (!Array.isArray(value) && value)) {
         getCITypeAttributesByTypeIds({ type_ids: Array.isArray(value) ? value.join(',') : value }).then((res) => {
-          this.attributes = res.attributes
+          if (this.changeCITypeRequestValue === value) {
+            this.attributes = res.attributes
+          }
         })
       }
       if (!Array.isArray(value) && value) {
         getRecursive_level2children(value).then((res) => {
-          this.level2children = res
+          if (this.changeCITypeRequestValue === value) {
+            this.level2children = res
+          }
         })
       }
       if ((['bar', 'line', 'pie'].includes(this.chartType) && this.form.category === 1) || this.chartType === 'table') {
         getCITypeCommonAttributesByTypeIds({ type_ids: Array.isArray(value) ? value.join(',') : value }).then((res) => {
-          this.commonAttributes = res.attributes
+          if (this.changeCITypeRequestValue === value) {
+            this.commonAttributes = res.attributes
+          }
         })
       }
     },

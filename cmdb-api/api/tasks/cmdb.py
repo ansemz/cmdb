@@ -1,10 +1,11 @@
-# -*- coding:utf-8 -*- 
+# -*- coding:utf-8 -*-
 
 
+import datetime
 import json
-
 import redis_lock
 from flask import current_app
+from flask import has_request_context
 from flask_login import login_user
 
 import api.lib.cmdb.ci
@@ -12,16 +13,23 @@ from api.extensions import celery
 from api.extensions import db
 from api.extensions import es
 from api.extensions import rd
+from api.lib.cmdb.cache import AttributeCache
 from api.lib.cmdb.cache import CITypeAttributesCache
 from api.lib.cmdb.const import CMDB_QUEUE
 from api.lib.cmdb.const import REDIS_PREFIX_CI
 from api.lib.cmdb.const import REDIS_PREFIX_CI_RELATION
 from api.lib.cmdb.const import REDIS_PREFIX_CI_RELATION2
+from api.lib.cmdb.const import RelationSourceEnum
 from api.lib.cmdb.perms import CIFilterPermsCRUD
+from api.lib.cmdb.utils import TableMap
 from api.lib.decorator import flush_db
 from api.lib.decorator import reconnect_db
 from api.lib.perm.acl.cache import UserCache
 from api.lib.utils import handle_arg_list
+from api.models.cmdb import Attribute
+from api.models.cmdb import AutoDiscoveryCI
+from api.models.cmdb import AutoDiscoveryCIType
+from api.models.cmdb import AutoDiscoveryCITypeRelation
 from api.models.cmdb import CI
 from api.models.cmdb import CIRelation
 from api.models.cmdb import CITypeAttribute
@@ -33,6 +41,7 @@ from api.models.cmdb import CITypeAttribute
 def ci_cache(ci_id, operate_type, record_id):
     from api.lib.cmdb.ci import CITriggerManager
     from api.lib.cmdb.ci import CIRelationManager
+    from api.lib.cmdb.ci_type import CITypeAttributeManager
 
     m = api.lib.cmdb.ci.CIManager()
     ci_dict = m.get_ci_by_id_from_db(ci_id, need_children=False, use_master=False)
@@ -45,20 +54,31 @@ def ci_cache(ci_id, operate_type, record_id):
     current_app.logger.info("{0} flush..........".format(ci_id))
 
     if operate_type:
-        current_app.test_request_context().push()
-        login_user(UserCache.get('worker'))
+        if not has_request_context():
+            current_app.test_request_context().push()
+            login_user(UserCache.get('worker'))
 
-        CITriggerManager.fire(operate_type, ci_dict, record_id)
+        _, enum_map = CITypeAttributeManager.get_attr_names_label_enum(ci_dict.get('_type'))
+        payload = dict()
+        for k, v in ci_dict.items():
+            if k in enum_map:
+                if isinstance(v, list):
+                    payload[k] = [enum_map[k].get(i, i) for i in v]
+                else:
+                    payload[k] = enum_map[k].get(v, v)
+            else:
+                payload[k] = v
+        CITriggerManager.fire(operate_type, payload, record_id)
 
     ci_dict and CIRelationManager.build_by_attribute(ci_dict)
 
 
 @celery.task(name="cmdb.rebuild_relation_for_attribute_changed", queue=CMDB_QUEUE)
 @reconnect_db
-def rebuild_relation_for_attribute_changed(ci_type_relation):
+def rebuild_relation_for_attribute_changed(ci_type_relation, uid):
     from api.lib.cmdb.ci import CIRelationManager
 
-    CIRelationManager.rebuild_all_by_attribute(ci_type_relation)
+    CIRelationManager.rebuild_all_by_attribute(ci_type_relation, uid)
 
 
 @celery.task(name="cmdb.batch_ci_cache", queue=CMDB_QUEUE)
@@ -79,13 +99,26 @@ def batch_ci_cache(ci_ids, ):  # only for attribute change index
 
 @celery.task(name="cmdb.ci_delete", queue=CMDB_QUEUE)
 @reconnect_db
-def ci_delete(ci_id):
+def ci_delete(ci_id, type_id):
     current_app.logger.info(ci_id)
 
     if current_app.config.get("USE_ES"):
         es.delete(ci_id)
     else:
         rd.delete(ci_id, REDIS_PREFIX_CI)
+
+    instance = AutoDiscoveryCI.get_by(ci_id=ci_id, to_dict=False, first=True)
+    if instance is not None:
+        adt = AutoDiscoveryCIType.get_by_id(instance.adt_id)
+        if adt:
+            adt.update(updated_at=datetime.datetime.now())
+        instance.delete()
+
+    for attr in Attribute.get_by(reference_type_id=type_id, to_dict=False):
+        table = TableMap(attr=attr).table
+        for i in getattr(table, 'get_by')(attr_id=attr.id, value=ci_id, to_dict=False):
+            i.delete()
+            ci_cache(i.ci_id, None, None)
 
     current_app.logger.info("{0} delete..........".format(ci_id))
 
@@ -153,8 +186,9 @@ def ci_relation_add(parent_dict, child_id, uid):
     from api.lib.cmdb.search import SearchError
     from api.lib.cmdb.search.ci import search
 
-    current_app.test_request_context().push()
-    login_user(UserCache.get(uid))
+    if not has_request_context():
+        current_app.test_request_context().push()
+        login_user(UserCache.get(uid))
 
     for parent in parent_dict:
         parent_ci_type_name, _attr_name = parent.strip()[1:].split('.', 1)
@@ -176,7 +210,7 @@ def ci_relation_add(parent_dict, child_id, uid):
             for ci in response:
                 try:
                     CIRelationManager.add(ci['_id'], child_id)
-                    ci_relation_cache(ci['_id'], child_id)
+                    ci_relation_cache(ci['_id'], child_id, None)
                 except Exception as e:
                     current_app.logger.warning(e)
                 finally:
@@ -241,11 +275,124 @@ def ci_type_attribute_order_rebuild(type_id, uid):
 def calc_computed_attribute(attr_id, uid):
     from api.lib.cmdb.ci import CIManager
 
-    current_app.test_request_context().push()
-    login_user(UserCache.get(uid))
+    if not has_request_context():
+        current_app.test_request_context().push()
+        login_user(UserCache.get(uid))
 
     cim = CIManager()
     for i in CITypeAttribute.get_by(attr_id=attr_id, to_dict=False):
         cis = CI.get_by(type_id=i.type_id, to_dict=False)
         for ci in cis:
             cim.update(ci.id, {})
+
+
+@celery.task(name="cmdb.write_ad_rule_sync_history", queue=CMDB_QUEUE)
+@reconnect_db
+def write_ad_rule_sync_history(rules, oneagent_id, oneagent_name, sync_at):
+    from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryRuleSyncHistoryCRUD
+
+    for rule in rules:
+        AutoDiscoveryRuleSyncHistoryCRUD().upsert(adt_id=rule['id'],
+                                                  oneagent_id=oneagent_id,
+                                                  oneagent_name=oneagent_name,
+                                                  sync_at=sync_at,
+                                                  commit=False)
+    try:
+        db.session.commit()
+    except Exception as e:
+        current_app.logger.error("write auto discovery rule sync history failed: {}".format(e))
+        db.session.rollback()
+
+
+@celery.task(name="cmdb.build_relations_for_ad_accept", queue=CMDB_QUEUE)
+@reconnect_db
+def build_relations_for_ad_accept(adc, ci_id, ad_key2attr):
+    from api.lib.cmdb.ci import CIRelationManager
+    from api.lib.cmdb.search import SearchError
+    from api.lib.cmdb.search.ci import search as ci_search
+
+    current_app.test_request_context().push()
+    login_user(UserCache.get('worker'))
+
+    relation_ads = AutoDiscoveryCITypeRelation.get_by(ad_type_id=adc['type_id'], to_dict=False)
+    for r_adt in relation_ads:
+        ad_key = r_adt.ad_key
+        if not adc['instance'].get(ad_key):
+            continue
+
+        ad_key_values = [adc['instance'].get(ad_key)] if not isinstance(
+            adc['instance'].get(ad_key), list) else adc['instance'].get(ad_key)
+        for ad_key_value in ad_key_values:
+            query = "_type:{},{}:{}".format(r_adt.peer_type_id, r_adt.peer_attr_id, ad_key_value)
+            s = ci_search(query, use_ci_filter=False, count=1000000)
+            try:
+                response, _, _, _, _, _ = s.search()
+            except SearchError as e:
+                current_app.logger.error("build_relations_for_ad_accept failed: {}".format(e))
+                return
+
+            for relation_ci in response:
+                relation_ci_id = relation_ci['_id']
+                try:
+                    CIRelationManager.add(ci_id, relation_ci_id,
+                                          valid=False,
+                                          source=RelationSourceEnum.AUTO_DISCOVERY)
+
+                except:
+                    try:
+                        CIRelationManager.add(relation_ci_id, ci_id,
+                                              valid=False,
+                                              source=RelationSourceEnum.AUTO_DISCOVERY)
+                    except:
+                        pass
+
+    # build relations in reverse
+    relation_ads = AutoDiscoveryCITypeRelation.get_by(peer_type_id=adc['type_id'], to_dict=False)
+    attr2ad_key = {v: k for k, v in ad_key2attr.items()}
+    for r_adt in relation_ads:
+        attr = AttributeCache.get(r_adt.peer_attr_id)
+        ad_key = attr2ad_key.get(attr and attr.name)
+        if not ad_key:
+            continue
+
+        ad_value = adc['instance'].get(ad_key)
+        peer_ad_key = r_adt.ad_key
+        peer_instances = AutoDiscoveryCI.get_by(type_id=r_adt.ad_type_id, to_dict=False)
+        for peer_instance in peer_instances:
+            peer_ad_values = peer_instance.instance.get(peer_ad_key)
+            peer_ad_values = [peer_ad_values] if not isinstance(peer_ad_values, list) else peer_ad_values
+            if ad_value in peer_ad_values and peer_instance.ci_id:
+                try:
+                    CIRelationManager.add(peer_instance.ci_id, ci_id,
+                                          valid=False,
+                                          source=RelationSourceEnum.AUTO_DISCOVERY)
+
+                except:
+                    try:
+                        CIRelationManager.add(ci_id, peer_instance.ci_id,
+                                              valid=False,
+                                              source=RelationSourceEnum.AUTO_DISCOVERY)
+                    except:
+                        pass
+
+
+@celery.task(name="cmdb.dcim_calc_u_free_count", queue=CMDB_QUEUE)
+@reconnect_db
+def dcim_calc_u_free_count():
+    from api.lib.cmdb.ci import CIManager
+    from api.lib.cmdb.dcim.rack import RackManager
+    from api.lib.cmdb.dcim.const import RackBuiltinAttributes
+
+    if not has_request_context():
+        current_app.test_request_context().push()
+        login_user(UserCache.get('worker'))
+
+    try:
+        rack_m = RackManager()
+    except Exception:
+        return
+
+    racks = CI.get_by(type_id=rack_m.type_id, to_dict=False)
+    for rack in racks:
+        payload = {RackBuiltinAttributes.FREE_U_COUNT: rack_m.calc_u_free_count(rack.id)}
+        CIManager().update(rack.id, **payload)

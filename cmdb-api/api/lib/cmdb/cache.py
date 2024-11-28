@@ -2,12 +2,22 @@
 
 from __future__ import unicode_literals
 
-from flask import current_app
+from collections import defaultdict
 
+import datetime
+import os
+import yaml
+from flask import current_app
+import json
 from api.extensions import cache
 from api.extensions import db
 from api.lib.cmdb.custom_dashboard import CustomDashboardManager
-from api.models.cmdb import Attribute
+from api.models.cmdb import Attribute, AutoDiscoveryExecHistory
+from api.models.cmdb import AutoDiscoveryCI
+from api.models.cmdb import AutoDiscoveryCIType
+from api.models.cmdb import AutoDiscoveryCITypeRelation
+from api.models.cmdb import AutoDiscoveryCounter
+from api.models.cmdb import AutoDiscoveryRuleSyncHistory
 from api.models.cmdb import CI
 from api.models.cmdb import CIType
 from api.models.cmdb import CITypeAttribute
@@ -245,7 +255,7 @@ class CMDBCounterCache(object):
 
     @classmethod
     def set(cls, result):
-        cache.set(cls.KEY, result, timeout=0)
+        cache.set(cls.KEY, json.loads(json.dumps(result)), timeout=0)
 
     @classmethod
     def reset(cls):
@@ -267,7 +277,7 @@ class CMDBCounterCache(object):
 
         cls.set(result)
 
-        return result
+        return json.loads(json.dumps(result))
 
     @classmethod
     def update(cls, custom, flush=True):
@@ -289,25 +299,36 @@ class CMDBCounterCache(object):
             result[custom['id']] = res
             cls.set(result)
 
-        return res
+        return json.loads(json.dumps(res))
 
-    @staticmethod
-    def relation_counter(type_id, level, other_filer, type_ids):
+    @classmethod
+    def relation_counter(cls, type_id, level, other_filer, type_ids):
         from api.lib.cmdb.search.ci_relation.search import Search as RelSearch
         from api.lib.cmdb.search import SearchError
         from api.lib.cmdb.search.ci import search
+        from api.lib.cmdb.attribute import AttributeManager
 
         query = "_type:{}".format(type_id)
+        if other_filer:
+            query = "{},{}".format(query, other_filer)
         s = search(query, count=1000000)
         try:
             type_names, _, _, _, _, _ = s.search()
         except SearchError as e:
             current_app.logger.error(e)
             return
+        root_type = CITypeCache.get(type_id)
+        show_attr_id = root_type and root_type.show_id
+        show_attr = AttributeCache.get(show_attr_id)
 
-        type_id_names = [(str(i.get('_id')), i.get(i.get('unique'))) for i in type_names]
+        type_id_names = []
+        for i in type_names:
+            attr_value = i.get(show_attr and show_attr.name) or i.get(i.get('unique'))
+            enum_map = AttributeManager.get_enum_map(show_attr_id or i.get('unique'))
 
-        s = RelSearch([i[0] for i in type_id_names], level, other_filer or '')
+            type_id_names.append((str(i.get('_id')), enum_map.get(attr_value, attr_value)))
+
+        s = RelSearch([i[0] for i in type_id_names], level)
         try:
             stats = s.statistics(type_ids, need_filter=False)
         except SearchError as e:
@@ -337,11 +358,12 @@ class CMDBCounterCache(object):
 
         return result
 
-    @staticmethod
-    def attribute_counter(custom):
+    @classmethod
+    def attribute_counter(cls, custom):
         from api.lib.cmdb.search import SearchError
         from api.lib.cmdb.search.ci import search
         from api.lib.cmdb.utils import ValueTypeMap
+        from api.lib.cmdb.attribute import AttributeManager
 
         custom.setdefault('options', {})
         type_id = custom.get('type_id')
@@ -357,16 +379,24 @@ class CMDBCounterCache(object):
         other_filter = "{}".format(other_filter) if other_filter else ''
 
         if custom['options'].get('ret') == 'cis':
+            enum_map = {}
+            for _attr_id in attr_ids:
+                _attr = AttributeCache.get(_attr_id)
+                if _attr:
+                    enum_map[_attr.alias] = AttributeManager.get_enum_map(_attr_id)
+
             query = "_type:({}),{}".format(";".join(map(str, type_ids)), other_filter)
             s = search(query, fl=attr_ids, ret_key='alias', count=100)
             try:
                 cis, _, _, _, _, _ = s.search()
+                cis = [{k: (enum_map.get(k) or {}).get(v, v) for k, v in ci.items()} for ci in cis]
             except SearchError as e:
                 current_app.logger.error(e)
                 return
 
             return cis
 
+        origin_result = dict()
         result = dict()
         # level = 1
         query = "_type:({}),{}".format(";".join(map(str, type_ids)), other_filter)
@@ -376,13 +406,18 @@ class CMDBCounterCache(object):
         except SearchError as e:
             current_app.logger.error(e)
             return
+
+        enum_map1 = AttributeManager.get_enum_map(attr_ids[0])
         for i in (list(facet.values()) or [[]])[0]:
-            result[ValueTypeMap.serialize2[attr2value_type[0]](str(i[0]))] = i[1]
+            k = ValueTypeMap.serialize2[attr2value_type[0]](str(i[0]))
+            result[enum_map1.get(k, k)] = i[1]
+            origin_result[k] = i[1]
         if len(attr_ids) == 1:
             return result
 
         # level = 2
-        for v in result:
+        enum_map2 = AttributeManager.get_enum_map(attr_ids[1])
+        for v in origin_result:
             query = "_type:({}),{},{}:{}".format(";".join(map(str, type_ids)), other_filter, attr_ids[0], v)
             s = search(query, fl=attr_ids, facet=[attr_ids[1]], count=1)
             try:
@@ -390,18 +425,22 @@ class CMDBCounterCache(object):
             except SearchError as e:
                 current_app.logger.error(e)
                 return
-            result[v] = dict()
+            result[enum_map1.get(v, v)] = dict()
+            origin_result[v] = dict()
             for i in (list(facet.values()) or [[]])[0]:
-                result[v][ValueTypeMap.serialize2[attr2value_type[1]](str(i[0]))] = i[1]
+                k = ValueTypeMap.serialize2[attr2value_type[1]](str(i[0]))
+                result[enum_map1.get(v, v)][enum_map2.get(k, k)] = i[1]
+                origin_result[v][k] = i[1]
 
         if len(attr_ids) == 2:
             return result
 
         # level = 3
-        for v1 in result:
-            if not isinstance(result[v1], dict):
+        enum_map3 = AttributeManager.get_enum_map(attr_ids[2])
+        for v1 in origin_result:
+            if not isinstance(result[enum_map1.get(v1, v1)], dict):
                 continue
-            for v2 in result[v1]:
+            for v2 in origin_result[v1]:
                 query = "_type:({}),{},{}:{},{}:{}".format(";".join(map(str, type_ids)), other_filter,
                                                            attr_ids[0], v1, attr_ids[1], v2)
                 s = search(query, fl=attr_ids, facet=[attr_ids[2]], count=1)
@@ -410,9 +449,10 @@ class CMDBCounterCache(object):
                 except SearchError as e:
                     current_app.logger.error(e)
                     return
-                result[v1][v2] = dict()
+                result[enum_map1.get(v1, v1)][enum_map2.get(v2, v2)] = dict()
                 for i in (list(facet.values()) or [[]])[0]:
-                    result[v1][v2][ValueTypeMap.serialize2[attr2value_type[2]](str(i[0]))] = i[1]
+                    k = ValueTypeMap.serialize2[attr2value_type[2]](str(i[0]))
+                    result[enum_map1.get(v1, v1)][enum_map2.get(v2, v2)][enum_map3.get(k, k)] = i[1]
 
         return result
 
@@ -448,7 +488,67 @@ class CMDBCounterCache(object):
 
         cache.set(cls.KEY2, result, timeout=0)
 
-        return result
+        res = db.session.query(AutoDiscoveryCI.created_at,
+                               AutoDiscoveryCI.updated_at,
+                               AutoDiscoveryCI.adt_id,
+                               AutoDiscoveryCI.type_id,
+                               AutoDiscoveryCI.is_accept).filter(AutoDiscoveryCI.deleted.is_(False))
+
+        today = datetime.datetime.today()
+        this_month = datetime.datetime(today.year, today.month, 1)
+        last_month = this_month - datetime.timedelta(days=1)
+        last_month = datetime.datetime(last_month.year, last_month.month, 1)
+        this_week = today - datetime.timedelta(days=datetime.date.weekday(today))
+        this_week = datetime.datetime(this_week.year, this_week.month, this_week.day)
+        last_week = this_week - datetime.timedelta(days=7)
+        last_week = datetime.datetime(last_week.year, last_week.month, last_week.day)
+        result = dict()
+        for i in res:
+            if i.type_id not in result:
+                result[i.type_id] = dict(instance_count=0, accept_count=0,
+                                         this_month_count=0, this_week_count=0, last_month_count=0, last_week_count=0)
+
+                adts = AutoDiscoveryCIType.get_by(type_id=i.type_id, to_dict=False)
+                result[i.type_id]['rule_count'] = len(adts) + AutoDiscoveryCITypeRelation.get_by(
+                    ad_type_id=i.type_id, only_query=True).count()
+                result[i.type_id]['exec_target_count'] = len(
+                    set([j.oneagent_id for adt in adts for j in db.session.query(
+                        AutoDiscoveryRuleSyncHistory.oneagent_id).filter(
+                        AutoDiscoveryRuleSyncHistory.adt_id == adt.id)]))
+
+            result[i.type_id]['instance_count'] += 1
+            if i.is_accept:
+                result[i.type_id]['accept_count'] += 1
+
+            if last_month <= i.created_at < this_month:
+                result[i.type_id]['last_month_count'] += 1
+            elif i.created_at >= this_month:
+                result[i.type_id]['this_month_count'] += 1
+
+            if last_week <= i.created_at < this_week:
+                result[i.type_id]['last_week_count'] += 1
+            elif i.created_at >= this_week:
+                result[i.type_id]['this_week_count'] += 1
+
+        for type_id in result:
+            existed = AutoDiscoveryCounter.get_by(type_id=type_id, first=True, to_dict=False)
+            if existed is None:
+                AutoDiscoveryCounter.create(type_id=type_id, **result[type_id])
+            else:
+                existed.update(**result[type_id])
+
+        for i in AutoDiscoveryCounter.get_by(to_dict=False):
+            if i.type_id not in result:
+                i.delete()
+
+    @classmethod
+    def clear_ad_exec_history(cls):
+        ci_types = CIType.get_by(to_dict=False)
+        for ci_type in ci_types:
+            for i in AutoDiscoveryExecHistory.get_by(type_id=ci_type.id, only_query=True).order_by(
+                    AutoDiscoveryExecHistory.id.desc()).offset(50000):
+                i.delete(commit=False)
+            db.session.commit()
 
     @classmethod
     def get_adc_counter(cls):
@@ -456,19 +556,18 @@ class CMDBCounterCache(object):
 
     @classmethod
     def flush_sub_counter(cls):
-        result = dict(type_id2users=dict())
+        result = dict(type_id2users=defaultdict(list))
 
         types = db.session.query(PreferenceShowAttributes.type_id,
                                  PreferenceShowAttributes.uid, PreferenceShowAttributes.created_at).filter(
             PreferenceShowAttributes.deleted.is_(False)).group_by(
             PreferenceShowAttributes.uid, PreferenceShowAttributes.type_id)
         for i in types:
-            result['type_id2users'].setdefault(i.type_id, []).append(i.uid)
+            result['type_id2users'][i.type_id].append(i.uid)
 
         types = PreferenceTreeView.get_by(to_dict=False)
         for i in types:
 
-            result['type_id2users'].setdefault(i.type_id, [])
             if i.uid not in result['type_id2users'][i.type_id]:
                 result['type_id2users'][i.type_id].append(i.uid)
 
@@ -479,3 +578,21 @@ class CMDBCounterCache(object):
     @classmethod
     def get_sub_counter(cls):
         return cache.get(cls.KEY3) or cls.flush_sub_counter()
+
+
+class AutoDiscoveryMappingCache(object):
+    PREFIX = 'CMDB::AutoDiscovery::Mapping::{}'
+
+    @classmethod
+    def get(cls, name):
+        res = cache.get(cls.PREFIX.format(name)) or {}
+        if not res:
+            path = os.path.join(os.path.abspath(os.path.dirname(__file__)),
+                                "auto_discovery/mapping/{}.yaml".format(name))
+            if os.path.exists(path):
+                with open(path, 'r') as f:
+                    mapping = yaml.safe_load(f)
+                    res = mapping.get('mapping') or {}
+                    res and cache.set(cls.PREFIX.format(name), res, timeout=0)
+
+        return res

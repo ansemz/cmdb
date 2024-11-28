@@ -7,6 +7,7 @@
       @search="handleSearch"
       @searchFormReset="searchFormReset"
       @searchFormChange="searchFormChange"
+      @export="handleExport"
     ></search-form>
     <vxe-table
       ref="xTable"
@@ -44,6 +45,7 @@
         </template>
       </vxe-column>
       <vxe-column field="type_id" width="100px" :title="$t('cmdb.ciType.ciType')"></vxe-column>
+      <vxe-column field="show_attr_value" width="100px" :title="$t('cmdb.ci.instance')"></vxe-column>
       <vxe-column field="operate_type" width="89px" :title="$t('operation')">
         <template #header="{ column }">
           <span>{{ column.title }}</span>
@@ -86,13 +88,13 @@
         </template>
       </vxe-column>
       <vxe-column field="attr_alias" :title="$t('cmdb.history.attribute')"></vxe-column>
-      <vxe-column field="old" :title="$t('cmdb.history.old')"></vxe-column>
-      <vxe-column field="new" :title="$t('cmdb.history.new')"></vxe-column>
+      <vxe-column :cell-type="'string'" field="old" :title="$t('cmdb.history.old')"></vxe-column>
+      <vxe-column :cell-type="'string'" field="new" :title="$t('cmdb.history.new')"></vxe-column>
     </vxe-table>
     <pager
       :current-page.sync="queryParams.page"
       :page-size.sync="queryParams.page_size"
-      :page-sizes="[50, 100, 200]"
+      :page-sizes="[50, 100, 200, 500]"
       :total="total"
       :isLoading="loading"
       @change="onChange"
@@ -313,7 +315,7 @@ export default {
       }
     },
     mergeRowMethod({ row, _rowIndex, column, visibleData }) {
-      const fields = ['created_at', 'user', 'type_id']
+      const fields = ['created_at', 'user', 'type_id', 'show_attr_value']
       const cellValue = row[column.property]
       const created_at = row['created_at']
       if (column.property === 'created_at') {
@@ -364,6 +366,22 @@ export default {
             }
           }
         }
+      } else if (column.property === 'show_attr_value') {
+        if (cellValue && fields.includes(column.property)) {
+          const prevRow = visibleData[_rowIndex - 1]
+          let nextRow = visibleData[_rowIndex + 1]
+          if (prevRow && prevRow[column.property] === cellValue && prevRow['created_at'] === created_at) {
+            return { rowspan: 0, colspan: 0 }
+          } else {
+            let countRowspan = 1
+            while (nextRow && nextRow[column.property] === cellValue && nextRow['created_at'] === created_at) {
+              nextRow = visibleData[++countRowspan + _rowIndex]
+            }
+            if (countRowspan > 1) {
+              return { rowspan: countRowspan, colspan: 1 }
+            }
+          }
+        }
       }
     },
     filterUser() {
@@ -391,6 +409,37 @@ export default {
     filterOption(input, option) {
       return option.componentOptions.children[0].text.indexOf(input) >= 0
     },
+
+    async handleExport(params) {
+      const hide = this.$message.loading(this.$t('loading'), 0)
+      const res = await getCIHistoryTable({
+        ...params,
+        page: this.queryParams.page,
+        page_size: this.queryParams.page_size,
+      })
+      hide()
+      const data = []
+      res.records.forEach((item) => {
+        item[0].type_id = this.handleTypeId(item[0].type_id)
+        item[1].forEach((subItem) => {
+          subItem.operate_type = this.handleOperateType(subItem.operate_type)
+          subItem.new = subItem.new || ''
+          subItem.old = subItem.old || ''
+          const tempObj = Object.assign(subItem, item[0])
+          data.push(tempObj)
+        })
+      })
+
+      this.$refs.xTable.exportData({
+        filename: this.$t('cmdb.history.ciChange'),
+        sheetName: 'Sheet1',
+        type: 'xlsx',
+        types: ['xlsx', 'csv', 'html', 'xml', 'txt'],
+        isMerge: true,
+        isColgroup: true,
+        data,
+      })
+    }
   },
 }
 </script>

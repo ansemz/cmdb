@@ -2,6 +2,9 @@
 import _ from 'lodash'
 import XLSX from 'xlsx'
 import XLSXS from 'xlsx-js-style'
+import { CI_DEFAULT_ATTR } from './const.js'
+import i18n from '@/lang'
+
 export function sum(arr) {
     if (!arr.length) {
         return 0
@@ -11,7 +14,7 @@ export function sum(arr) {
     })
 }
 
-const strLength = (fData) => {
+export const strLength = (fData) => {
 
     if (!fData) {
         return 0
@@ -49,7 +52,10 @@ export function getCITableColumns(data, attrList, width = 1600, height) {
     const _attrList = _.orderBy(attrList, ['is_fixed'], ['desc'])
     const columns = []
     for (let attr of _attrList) {
-        const editRender = { name: 'input' }
+        const editRender = {
+          name: 'input',
+          enabled: !attr.is_computed && !attr.sys_computed
+        }
         switch (attr.value_type) {
             case '0':
                 editRender['props'] = { 'type': 'float' }
@@ -83,20 +89,46 @@ export function getCITableColumns(data, attrList, width = 1600, height) {
             delete editRender.props
 
         }
+
+        let title = attr.alias || attr.name
+        let sortable = !!attr.is_sortable
+        let attr_id = attr.id
+
+        if ([CI_DEFAULT_ATTR.UPDATE_TIME, CI_DEFAULT_ATTR.UPDATE_USER].includes(attr.name)) {
+            editRender.enabled = false
+            attr_id = attr.name
+
+            switch (attr.name) {
+                case CI_DEFAULT_ATTR.UPDATE_USER:
+                    title = i18n.t('cmdb.components.updater')
+                    break;
+                case CI_DEFAULT_ATTR.UPDATE_TIME:
+                    title = i18n.t('cmdb.components.updateTime')
+                    sortable = true
+                    break;
+                default:
+                    break;
+            }
+        }
+
         columns.push({
-            attr_id: attr.id,
+            attr_id,
             editRender,
-            title: attr.alias || attr.name,
+            title,
             field: attr.name,
             value_type: attr.value_type,
-            sortable: !!attr.is_sortable,
+            sortable,
             filters: attr.is_choice ? attr.choice_value : null,
+            choice_builtin: null,
             width: Math.min(Math.max(100, ...data.map(item => strLength(item[attr.name]))), 350),
             is_link: attr.is_link,
             is_password: attr.is_password,
             is_list: attr.is_list,
             is_choice: attr.is_choice,
             is_fixed: attr.is_fixed,
+            is_bool: attr.is_bool,
+            is_reference: attr.is_reference,
+            reference_type_id: attr.reference_type_id
         })
     }
 
@@ -137,6 +169,10 @@ export const getPropertyStyle = (attr) => {
 export const getPropertyIcon = (attr) => {
     switch (attr.value_type) {
         case '0':
+            if (attr.is_reference) {
+              return 'duose-quote'
+            }
+
             return 'duose-shishu'
         case '1':
             return 'duose-fudianshu'
@@ -146,6 +182,9 @@ export const getPropertyIcon = (attr) => {
             }
             if (attr.is_link) {
                 return 'duose-link'
+            }
+            if (attr.is_index === false) {
+              return 'duose-changwenben1'
             }
             return 'duose-wenben'
         case '3':
@@ -157,10 +196,50 @@ export const getPropertyIcon = (attr) => {
         case '6':
             return 'duose-json'
         case '7':
+            if (attr.is_bool) {
+              return 'duose-boole'
+            }
             return 'duose-password'
         case '8':
             return 'duose-link'
+        case '9':
+            return 'duose-changwenben1'
+        case '10':
+            return 'duose-boole'
+        case '11':
+            return 'duose-quote'
+        default:
+            return ''
     }
+}
+
+export const getPropertyType = (attr) => {
+  if (attr.is_password) {
+    return '7'
+  }
+  if (attr.is_link) {
+    return '8'
+  }
+
+  switch (attr.value_type) {
+    case '0':
+      if (attr.is_reference) {
+        return '11'
+      }
+      return '0'
+    case '2':
+      if (!attr.is_index) {
+        return '9'
+      }
+      return '2'
+    case '7':
+      if (attr.is_bool) {
+        return '10'
+      }
+      return '7'
+    default:
+      return attr?.value_type ?? ''
+  }
 }
 
 export const getLastLayout = (data, x1 = 0, y1 = 0, w1 = 0) => {

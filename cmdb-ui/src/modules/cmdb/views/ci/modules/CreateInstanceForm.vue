@@ -19,8 +19,8 @@
           :ref="`createInstanceFormByGroup_${group.id}`"
           :key="group.id || group.name"
           :group="group"
-          @handleFocusInput="handleFocusInput"
           :attributeList="attributeList"
+          @handleFocusInput="handleFocusInput"
         />
       </template>
       <template v-if="parentsType && parentsType.length">
@@ -35,7 +35,7 @@
                   <a-select v-model="parentsForm[item.name].attr">
                     <a-select-option
                       :title="attr.alias || attr.name"
-                      v-for="attr in item.attributes"
+                      v-for="attr in filterAttributes(item.attributes)"
                       :key="attr.name"
                       :value="attr.name"
                     >
@@ -57,8 +57,8 @@
     <template v-if="action === 'update'">
       <a-form :form="form">
         <p>{{ $t('cmdb.ci.tips2') }}</p>
-        <a-row :gutter="24" v-for="list in batchUpdateLists" :key="list.name">
-          <a-col :span="11">
+        <a-row :gutter="8" v-for="list in batchUpdateLists" :key="list.name">
+          <a-col :span="6">
             <a-form-item>
               <el-select showSearch size="small" filterable v-model="list.name" :placeholder="$t('cmdb.ci.tips3')">
                 <el-option
@@ -72,13 +72,47 @@
               </el-select>
             </a-form-item>
           </a-col>
-          <a-col :span="11">
+          <a-col v-if="showListOperation(list.name)" :span="3">
             <a-form-item>
+              <el-select size="small" filterable v-model="list.operation" :placeholder="$t('placeholder2')">
+                <el-option
+                  v-for="(option) in listOperationOptions"
+                  :key="option.value"
+                  :value="option.value"
+                  :label="$t(option.label)"
+                >
+                </el-option>
+              </el-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="showListOperation(list.name) ? 10 : 13">
+            <a-form-item>
+              <CIReferenceAttr
+                v-if="getAttr(list.name).is_reference"
+                :referenceTypeId="getAttr(list.name).reference_type_id"
+                :isList="getAttr(list.name).is_list"
+                v-decorator="[
+                  list.name,
+                  {
+                    initialValue: getAttr(list.name).is_list ? [] : ''
+                  }
+                ]"
+              />
+              <a-switch
+                v-else-if="getAttr(list.name).is_bool"
+                v-decorator="[
+                  list.name,
+                  {
+                    valuePropName: 'checked',
+                    initialValue: false
+                  }
+                ]"
+              />
               <a-select
                 :style="{ width: '100%' }"
-                v-decorator="[list.name, { rules: [{ required: false }] }]"
+                v-decorator="[list.name, { rules: getDecoratorRules(list) }]"
                 :placeholder="$t('placeholder2')"
-                v-if="getFieldType(list.name).split('%%')[0] === 'select'"
+                v-else-if="getFieldType(list.name).split('%%')[0] === 'select'"
                 :mode="getFieldType(list.name).split('%%')[1] === 'multiple' ? 'multiple' : 'default'"
                 showSearch
                 allowClear
@@ -94,27 +128,29 @@
                       v-if="choice[1] && choice[1].icon && choice[1].icon.name"
                       :type="choice[1].icon.name"
                     />
-                    {{ choice[0] }}
+                    <a-tooltip placement="topLeft" :title="choice[1] ? choice[1].label || choice[0] : choice[0]" >
+                      {{ choice[1] ? choice[1].label || choice[0] : choice[0] }}
+                    </a-tooltip>
                   </span>
                 </a-select-option>
               </a-select>
               <a-input-number
-                v-decorator="[list.name, { rules: [{ required: false }] }]"
+                v-decorator="[list.name, { rules: getDecoratorRules(list) }]"
                 style="width: 100%"
-                v-if="getFieldType(list.name) === 'input_number'"
+                v-else-if="getFieldType(list.name) === 'input_number'"
               />
               <a-date-picker
-                v-decorator="[list.name, { rules: [{ required: false }] }]"
+                v-decorator="[list.name, { rules: getDecoratorRules(list) }]"
                 style="width: 100%"
                 :format="getFieldType(list.name) == '4' ? 'YYYY-MM-DD' : 'YYYY-MM-DD HH:mm:ss'"
                 :valueFormat="getFieldType(list.name) == '4' ? 'YYYY-MM-DD' : 'YYYY-MM-DD HH:mm:ss'"
-                v-if="getFieldType(list.name) === '4' || getFieldType(list.name) === '3'"
+                v-else-if="getFieldType(list.name) === '4' || getFieldType(list.name) === '3'"
                 :showTime="getFieldType(list.name) === '4' ? false : { format: 'HH:mm:ss' }"
               />
               <a-input
-                v-if="getFieldType(list.name) === 'input'"
+                v-else-if="getFieldType(list.name) === 'input'"
                 @focus="(e) => handleFocusInput(e, list)"
-                v-decorator="[list.name, { rules: [{ required: false }] }]"
+                v-decorator="[list.name, { rules: getDecoratorRules(list) }]"
               />
             </a-form-item>
           </a-col>
@@ -143,6 +179,7 @@ import JsonEditor from '../../../components/JsonEditor/jsonEditor.vue'
 import { valueTypeMap } from '../../../utils/const'
 import CreateInstanceFormByGroup from './createInstanceFormByGroup.vue'
 import { getCITypeParent, getCanEditByParentIdChildId } from '@/modules/cmdb/api/CITypeRelation'
+import CIReferenceAttr from '@/components/ciReferenceAttr/index.vue'
 
 export default {
   name: 'CreateInstanceForm',
@@ -151,6 +188,7 @@ export default {
     ElOption: Option,
     JsonEditor,
     CreateInstanceFormByGroup,
+    CIReferenceAttr
   },
   props: {
     typeIdFromRelation: {
@@ -173,6 +211,20 @@ export default {
       parentsType: [],
       parentsForm: {},
       canEdit: {},
+      listOperationOptions: [
+        {
+          value: 'cover',
+          label: 'cmdb.ci.cover'
+        },
+        {
+          value: 'add',
+          label: 'add'
+        },
+        {
+          value: 'delete',
+          label: 'delete'
+        }
+      ]
     }
   },
   computed: {
@@ -207,7 +259,7 @@ export default {
       this.attributeList = _attrList.sort((x, y) => y.is_required - x.is_required)
       await getCITypeGroupById(this.typeId).then((res1) => {
         const _attributesByGroup = res1.map((g) => {
-          g.attributes = g.attributes.filter((attr) => !attr.is_computed)
+          g.attributes = g.attributes.filter((attr) => !attr.is_computed && !attr.sys_computed)
           return g
         })
         const attrHasGroupIds = []
@@ -216,7 +268,7 @@ export default {
           attrHasGroupIds.push(...id)
         })
         const otherGroupAttr = this.attributeList.filter(
-          (attr) => !attrHasGroupIds.includes(attr.id) && !attr.is_computed
+          (attr) => !attrHasGroupIds.includes(attr.id) && !attr.is_computed && !attr.sys_computed
         )
         if (otherGroupAttr.length) {
           _attributesByGroup.push({ id: -1, name: this.$t('other'), attributes: otherGroupAttr })
@@ -228,12 +280,17 @@ export default {
     createInstance() {
       const _this = this
       if (_this.action === 'update') {
-        this.form.validateFields((err, values) => {
+        this.form.validateFields({ force: true }, (err, values) => {
           if (err) {
             return
           }
           Object.keys(values).forEach((k) => {
             const _tempFind = this.attributeList.find((item) => item.name === k)
+
+            if (_tempFind.is_reference) {
+              values[k] = values[k] ? values[k] : null
+            }
+
             if (
               _tempFind.value_type === '3' &&
               values[k] &&
@@ -251,6 +308,21 @@ export default {
             if (_tempFind.value_type === '6') {
               values[k] = values[k] ? JSON.parse(values[k]) : undefined
             }
+
+            if (_tempFind.is_list) {
+              const operation = this.batchUpdateLists?.find((item) => item.name === k)?.operation || 'cover'
+              switch (operation) {
+                case 'add':
+                case 'delete':
+                  values[k] = {
+                    op: operation,
+                    v: values[k]
+                  }
+                  break
+                default:
+                  break
+              }
+            }
           })
 
           _this.$emit('submit', values)
@@ -267,6 +339,11 @@ export default {
 
         Object.keys(values).forEach((k) => {
           const _tempFind = this.attributeList.find((item) => item.name === k)
+
+          if (_tempFind.is_reference) {
+            values[k] = values[k] ? values[k] : null
+          }
+
           if (
             _tempFind.value_type === '3' &&
             values[k] &&
@@ -340,7 +417,10 @@ export default {
       this.$nextTick(() => {
         this.form.resetFields()
         Promise.all([this.getCIType(), this.getAttributeList()]).then(() => {
-          this.batchUpdateLists = [{ name: this.attributeList[0].name }]
+          this.batchUpdateLists = [{
+            name: this.attributeList?.[0]?.name || undefined,
+            operation: 'cover'
+          }]
         })
         if (action === 'create') {
           getCITypeParent(this.typeId).then(async (res) => {
@@ -381,6 +461,9 @@ export default {
       }
       return 'input'
     },
+    getAttr(name) {
+      return this.attributeList.find((item) => item.name === name) ?? {}
+    },
     getSelectFieldOptions(name) {
       const _find = this.attributeList.find((item) => item.name === name)
       if (_find) {
@@ -389,7 +472,10 @@ export default {
       return []
     },
     handleAdd() {
-      this.batchUpdateLists.push({ name: undefined })
+      this.batchUpdateLists.push({
+        name: undefined,
+        operation: 'cover'
+      })
     },
     handleDelete(name) {
       const _idx = this.batchUpdateLists.findIndex((item) => item.name === name)
@@ -415,6 +501,36 @@ export default {
     jsonEditorOk(jsonData) {
       this.form.setFieldsValue({ [this.editAttr.name]: JSON.stringify(jsonData) })
     },
+
+    showListOperation(name) {
+      if (!name) {
+        return false
+      }
+      const attr = this.attributeList.find((attr) => attr.name === name)
+
+      return attr && attr.is_list
+    },
+
+    getDecoratorRules(data) {
+      const { name, operation } = data
+      const isList = this.showListOperation(name)
+      const rules = [
+        { required: false }
+      ]
+      if (isList && ['delete', 'add'].includes(operation)) {
+        rules[0] = {
+          required: true,
+          message: this.$t('placeholder1')
+        }
+      }
+
+      return rules
+    },
+    filterAttributes(attributes) {
+      return attributes.filter((attr) => {
+        return !attr.is_bool && !attr.is_reference
+      })
+    },
   },
 }
 </script>
@@ -425,7 +541,7 @@ export default {
   }
   .ant-drawer-body {
     overflow-y: auto;
-    max-height: calc(100vh - 110px);
+    height: calc(100vh - 110px);
   }
 }
 </style>

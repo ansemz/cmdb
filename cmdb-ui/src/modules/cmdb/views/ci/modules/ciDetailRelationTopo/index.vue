@@ -29,6 +29,10 @@ export default {
   methods: {
     init() {
       const root = document.getElementById('ci-detail-relation-topo')
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')
+      context.font = '16px'
+
       this.canvas = new TreeCanvas({
         root: root,
         disLinkable: false, // 可删除连线
@@ -54,7 +58,15 @@ export default {
               return 10
             },
             getWidth(d) {
-              return 40
+              const metrics = context.measureText(d?.title || '')
+              const width = metrics.width
+              /**
+               * width 文字宽度
+               * 20    icon 宽度
+               * 4     盒子内边距
+               * 40    节点间距
+               */
+              return width + 20 + 4 + 40
             },
             getHGap(d) {
               return 80
@@ -66,25 +78,34 @@ export default {
         },
       })
       this.canvas.setZoomable(true, true)
+
       this.canvas.on('events', ({ type, data }) => {
         const sourceNode = data?.id || null
         if (type === 'custom:clickLeft') {
-          searchCIRelation(`root_id=${Number(sourceNode)}&&level=1&&reverse=1&&count=10000`).then((res) => {
-            this.redrawData(res, sourceNode, 'left')
-          })
+          this.debounceClick(sourceNode, 1)
         }
         if (type === 'custom:clickRight') {
-          searchCIRelation(`root_id=${Number(sourceNode)}&&level=1&&reverse=0&&count=10000`).then((res) => {
-            this.redrawData(res, sourceNode, 'right')
-          })
+          this.debounceClick(sourceNode, 0)
         }
       })
     },
+
+    debounceClick: _.debounce(function(sourceNode, reverse) {
+      searchCIRelation(`root_id=${Number(sourceNode)}&level=1&reverse=${reverse}&count=10000`).then((res) => {
+        this.redrawData(res, sourceNode, reverse === 1 ? 'left' : 'right')
+      })
+    }, 300),
+
     setTopoData(data) {
+      const root = document.getElementById('ci-detail-relation-topo')
+      if (root && root?.innerHTML) {
+        root.innerHTML = ''
+      }
       this.canvas = null
       this.init()
       this.topoData = _.cloneDeep(data)
-      this.canvas.draw(data, {}, () => {
+
+      this.canvas.redraw(data, {}, () => {
         this.canvas.focusCenterWithAnimate()
       })
     },

@@ -1,24 +1,33 @@
 # -*- coding:utf-8 -*-
-
+import copy
 import json
-from io import BytesIO
-
+import uuid
 from flask import abort
 from flask import current_app
 from flask import request
 from flask_login import current_user
+from io import BytesIO
 
+from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryAccountCRUD
 from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryCICRUD
 from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryCITypeCRUD
+from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryCITypeRelationCRUD
+from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryComponentsManager
+from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryCounterCRUD
+from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryExecHistoryCRUD
 from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryHTTPManager
 from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryRuleCRUD
+from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryRuleSyncHistoryCRUD
 from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoverySNMPManager
-from api.lib.cmdb.auto_discovery.const import DEFAULT_HTTP
+from api.lib.cmdb.auto_discovery.const import DEFAULT_INNER
+from api.lib.cmdb.auto_discovery.const import PRIVILEGED_USERS
+from api.lib.cmdb.cache import AttributeCache
 from api.lib.cmdb.const import PermEnum
 from api.lib.cmdb.const import ResourceTypeEnum
+from api.lib.cmdb.ipam.subnet import SubnetManager
 from api.lib.cmdb.resp_format import ErrFormat
 from api.lib.cmdb.search import SearchError
-from api.lib.cmdb.search.ci import search
+from api.lib.cmdb.search.ci import search as ci_search
 from api.lib.decorator import args_required
 from api.lib.decorator import args_validate
 from api.lib.perm.acl.acl import has_perm_from_args
@@ -37,13 +46,18 @@ class AutoDiscoveryRuleView(APIView):
 
         rebuild = False
         exists = {i['name'] for i in res}
-        for i in DEFAULT_HTTP:
+        for i in copy.deepcopy(DEFAULT_INNER):
             if i['name'] not in exists:
+                i.pop('en', None)
                 AutoDiscoveryRuleCRUD().add(**i)
                 rebuild = True
 
         if rebuild:
             _, res = AutoDiscoveryRuleCRUD.search(page=1, page_size=100000, **request.values)
+
+        for i in res:
+            if i['type'] == 'http':
+                i['resources'] = AutoDiscoveryHTTPManager().get_resources(i['name'])
 
         return self.jsonify(res)
 
@@ -98,24 +112,39 @@ class AutoDiscoveryRuleTemplateFileView(APIView):
 
 
 class AutoDiscoveryRuleHTTPView(APIView):
-    url_prefix = ("/adr/http/<string:name>/categories", "/adr/http/<string:name>/attributes",
-                  "/adr/snmp/<string:name>/attributes")
+    url_prefix = ("/adr/http/<string:name>/categories",
+                  "/adr/http/<string:name>/attributes",
+                  "/adr/http/<string:name>/mapping",
+                  "/adr/snmp/<string:name>/attributes",
+                  "/adr/components/<string:name>/attributes",)
 
     def get(self, name):
         if "snmp" in request.url:
             return self.jsonify(AutoDiscoverySNMPManager.get_attributes())
 
+        if "components" in request.url:
+            return self.jsonify(AutoDiscoveryComponentsManager.get_attributes(name))
+
         if "attributes" in request.url:
-            category = request.values.get('category')
-            return self.jsonify(AutoDiscoveryHTTPManager.get_attributes(name, category))
+            resource = request.values.get('resource')
+            return self.jsonify(AutoDiscoveryHTTPManager.get_attributes(name, resource))
+
+        if "mapping" in request.url:
+            resource = request.values.get('resource')
+            return self.jsonify(AutoDiscoveryHTTPManager.get_mapping(name, resource))
 
         return self.jsonify(AutoDiscoveryHTTPManager.get_categories(name))
 
 
 class AutoDiscoveryCITypeView(APIView):
-    url_prefix = ("/adt/ci_types/<int:type_id>", "/adt/<int:adt_id>")
+    url_prefix = ("/adt/ci_types/<int:type_id>",
+                  "/adt/ci_types/<int:type_id>/attributes",
+                  "/adt/<int:adt_id>")
 
     def get(self, type_id):
+        if "attributes" in request.url:
+            return self.jsonify(AutoDiscoveryCITypeCRUD.get_ad_attributes(type_id))
+
         _, res = AutoDiscoveryCITypeCRUD.search(page=1, page_size=100000, type_id=type_id, **request.values)
         for i in res:
             if isinstance(i.get("extra_option"), dict) and i['extra_option'].get('secret'):
@@ -123,6 +152,11 @@ class AutoDiscoveryCITypeView(APIView):
                     i['extra_option'].pop('secret', None)
                 else:
                     i['extra_option']['secret'] = AESCrypto.decrypt(i['extra_option']['secret'])
+            if isinstance(i.get("extra_option"), dict) and i['extra_option'].get('password'):
+                if not (current_user.username == "cmdb_agent" or current_user.uid == i['uid']):
+                    i['extra_option'].pop('password', None)
+                else:
+                    i['extra_option']['password'] = AESCrypto.decrypt(i['extra_option']['password'])
 
         return self.jsonify(res)
 
@@ -144,6 +178,27 @@ class AutoDiscoveryCITypeView(APIView):
         AutoDiscoveryCITypeCRUD().delete(adt_id)
 
         return self.jsonify(adt_id=adt_id)
+
+
+class AutoDiscoveryCITypeRelationView(APIView):
+    url_prefix = ("/adt/ci_types/<int:type_id>/relations", "/adt/relations/<int:_id>")
+
+    def get(self, type_id):
+        _, res = AutoDiscoveryCITypeRelationCRUD.search(page=1, page_size=100000, ad_type_id=type_id, **request.values)
+
+        return self.jsonify(res)
+
+    @args_required("relations")
+    def post(self, type_id):
+        return self.jsonify(AutoDiscoveryCITypeRelationCRUD().upsert(type_id, request.values['relations']))
+
+    def put(self):
+        return self.post()
+
+    def delete(self, _id):
+        AutoDiscoveryCITypeRelationCRUD().delete(_id)
+
+        return self.jsonify(id=_id)
 
 
 class AutoDiscoveryCIView(APIView):
@@ -171,6 +226,7 @@ class AutoDiscoveryCIView(APIView):
     @args_required("type_id")
     @args_required("adt_id")
     @args_required("instance")
+    @args_required("unique_value")
     def post(self):
         request.values.pop("_key", None)
         request.values.pop("_secret", None)
@@ -213,24 +269,131 @@ class AutoDiscoveryRuleSyncView(APIView):
     url_prefix = ("/adt/sync",)
 
     def get(self):
-        if current_user.username not in ("cmdb_agent", "worker", "admin"):
+        if current_user.username not in PRIVILEGED_USERS:
             return abort(403)
 
         oneagent_name = request.values.get('oneagent_name')
         oneagent_id = request.values.get('oneagent_id')
         last_update_at = request.values.get('last_update_at')
 
-        query = "{},oneagent_id:{}".format(oneagent_name, oneagent_id)
-        current_app.logger.info(query)
-        s = search(query)
-        try:
-            response, _, _, _, _, _ = s.search()
-        except SearchError as e:
-            import traceback
-            current_app.logger.error(traceback.format_exc())
-            return abort(400, str(e))
+        response = []
+        if AttributeCache.get('oneagent_id'):
+            query = "oneagent_id:{}".format(oneagent_id)
+            s = ci_search(query)
+            try:
+                response, _, _, _, _, _ = s.search()
+            except SearchError as e:
+                import traceback
+                current_app.logger.error(traceback.format_exc())
+                return abort(400, str(e))
 
-        ci_id = response and response[0]["_id"]
-        rules, last_update_at = AutoDiscoveryCITypeCRUD.get(ci_id, oneagent_id, last_update_at)
+        for res in response:
+            if res.get('{}_name'.format(res['ci_type'])) == oneagent_name or oneagent_name == res.get('oneagent_name'):
+                ci_id = res["_id"]
+                rules, last_update_at = AutoDiscoveryCITypeCRUD.get(ci_id, oneagent_id, oneagent_name, last_update_at)
 
-        return self.jsonify(rules=rules, last_update_at=last_update_at)
+                return self.jsonify(rules=rules, last_update_at=last_update_at)
+
+        rules, last_update_at1 = AutoDiscoveryCITypeCRUD.get(None, oneagent_id, oneagent_name, last_update_at)
+
+        subnet_scan_rules, last_update_at2 = SubnetManager().scan_rules(oneagent_id, last_update_at)
+
+        return self.jsonify(rules=rules,
+                            subnet_scan_rules=subnet_scan_rules,
+                            last_update_at=max(last_update_at1 or "", last_update_at2 or ""))
+
+
+class AutoDiscoveryRuleSyncHistoryView(APIView):
+    url_prefix = ("/adt/<int:adt_id>/sync/histories",)
+
+    def get(self, adt_id):
+        page = get_page(request.values.pop('page', 1))
+        page_size = get_page_size(request.values.pop('page_size', None))
+        numfound, res = AutoDiscoveryRuleSyncHistoryCRUD.search(page=page,
+                                                                page_size=page_size,
+                                                                adt_id=adt_id,
+                                                                **request.values)
+
+        return self.jsonify(page=page,
+                            page_size=page_size,
+                            numfound=numfound,
+                            total=len(res),
+                            result=res)
+
+
+class AutoDiscoveryTestView(APIView):
+    url_prefix = ("/adt/<int:adt_id>/test", "/adt/test/<string:exec_id>/result")
+
+    def get(self, exec_id):
+        return self.jsonify(stdout="1\n2\n3", exec_id=exec_id)
+
+    def post(self, adt_id):
+        return self.jsonify(exec_id=uuid.uuid4().hex)
+
+
+class AutoDiscoveryExecHistoryView(APIView):
+    url_prefix = ("/adc/exec/histories",)
+
+    @args_required('type_id')
+    def get(self):
+        page = get_page(request.values.pop('page', 1))
+        page_size = get_page_size(request.values.pop('page_size', None))
+        last_size = request.values.pop('last_size', None)
+        if last_size and last_size.isdigit():
+            last_size = int(last_size)
+        numfound, res = AutoDiscoveryExecHistoryCRUD.search(page=page,
+                                                            page_size=page_size,
+                                                            last_size=last_size,
+                                                            **request.values)
+
+        return self.jsonify(page=page,
+                            page_size=page_size,
+                            numfound=numfound,
+                            total=len(res),
+                            result=res)
+
+    @args_required('type_id')
+    @args_required('stdout')
+    def post(self):
+        AutoDiscoveryExecHistoryCRUD().add(type_id=request.values.get('type_id'),
+                                           stdout=request.values.get('stdout'))
+
+        return self.jsonify(code=200)
+
+
+class AutoDiscoveryCounterView(APIView):
+    url_prefix = ("/adc/counter",)
+
+    @args_required('type_id')
+    def get(self):
+        type_id = request.values.get('type_id')
+
+        return self.jsonify(AutoDiscoveryCounterCRUD().get(type_id))
+
+
+class AutoDiscoveryAccountView(APIView):
+    url_prefix = ("/adr/accounts", "/adr/accounts/<int:account_id>")
+
+    @args_required('adr_id')
+    def get(self):
+        adr_id = request.values.get('adr_id')
+
+        return self.jsonify(AutoDiscoveryAccountCRUD().get(adr_id))
+
+    @args_required('adr_id')
+    @args_required('accounts', value_required=False)
+    def post(self):
+        AutoDiscoveryAccountCRUD().upsert(**request.values)
+
+        return self.jsonify(code=200)
+
+    @args_required('config')
+    def put(self, account_id):
+        res = AutoDiscoveryAccountCRUD().update(account_id, **request.values)
+
+        return self.jsonify(res.to_dict())
+
+    def delete(self, account_id):
+        AutoDiscoveryAccountCRUD().delete(account_id)
+
+        return self.jsonify(account_id=account_id)

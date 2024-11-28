@@ -1,7 +1,7 @@
 # -*- coding:utf-8 -*-
 
 
-from flask import abort
+from flask import current_app
 from sqlalchemy import func
 
 from api.extensions import db
@@ -13,25 +13,41 @@ class DBMixin(object):
     cls = None
 
     @classmethod
-    def search(cls, page, page_size, fl=None, only_query=False, reverse=False, count_query=False, **kwargs):
+    def search(cls, page, page_size, fl=None, only_query=False, reverse=False, count_query=False,
+               last_size=None, **kwargs):
         page = get_page(page)
         page_size = get_page_size(page_size)
         if fl is None:
-            query = db.session.query(cls.cls).filter(cls.cls.deleted.is_(False))
+            query = db.session.query(cls.cls)
         else:
-            query = db.session.query(*[getattr(cls.cls, i) for i in fl]).filter(cls.cls.deleted.is_(False))
+            query = db.session.query(*[getattr(cls.cls, i) for i in fl])
 
         _query = None
         if count_query:
-            _query = db.session.query(func.count(cls.cls.id)).filter(cls.cls.deleted.is_(False))
+            _query = db.session.query(func.count(cls.cls.id))
+
+        if hasattr(cls.cls, 'deleted'):
+            query = query.filter(cls.cls.deleted.is_(False))
+            if _query:
+                _query = _query.filter(cls.cls.deleted.is_(False))
 
         for k in kwargs:
             if hasattr(cls.cls, k):
-                query = query.filter(getattr(cls.cls, k) == kwargs[k])
-                if count_query:
-                    _query = _query.filter(getattr(cls.cls, k) == kwargs[k])
+                if isinstance(kwargs[k], list):
+                    query = query.filter(getattr(cls.cls, k).in_(kwargs[k]))
+                    if count_query:
+                        _query = _query.filter(getattr(cls.cls, k).in_(kwargs[k]))
+                else:
+                    if "*" in str(kwargs[k]):
+                        query = query.filter(getattr(cls.cls, k).ilike(kwargs[k].replace('*', '%')))
+                        if count_query:
+                            _query = _query.filter(getattr(cls.cls, k).ilike(kwargs[k].replace('*', '%')))
+                    else:
+                        query = query.filter(getattr(cls.cls, k) == kwargs[k])
+                        if count_query:
+                            _query = _query.filter(getattr(cls.cls, k) == kwargs[k])
 
-        if reverse:
+        if reverse in current_app.config.get('BOOL_TRUE'):
             query = query.order_by(cls.cls.id.desc())
 
         if only_query and not count_query:
@@ -40,14 +56,15 @@ class DBMixin(object):
             return _query, query
 
         numfound = query.count()
-        return numfound, [i.to_dict() if fl is None else getattr(i, '_asdict')()
-                          for i in query.offset((page - 1) * page_size).limit(page_size)]
-
-    def _must_be_required(self, _id):
-        existed = self.cls.get_by_id(_id)
-        existed or abort(404, "Factor [{}] does not exist".format(_id))
-
-        return existed
+        if not last_size:
+            return numfound, [i.to_dict() if fl is None else getattr(i, '_asdict')()
+                              for i in query.offset((page - 1) * page_size).limit(page_size)]
+        else:
+            offset = numfound - last_size
+            if offset < 0:
+                offset = 0
+            return numfound, [i.to_dict() if fl is None else getattr(i, '_asdict')()
+                              for i in query.offset(offset).limit(last_size)]
 
     def _can_add(self, **kwargs):
         raise NotImplementedError

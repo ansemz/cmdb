@@ -1,15 +1,18 @@
 <template>
   <div class="relation-table" :style="{ padding: '0 20px 20px' }">
-    <a-button
-      v-if="!isInGrantComp"
-      style="margin-bottom: 10px"
-      @click="handleCreate"
-      type="primary"
-      size="small"
-      icon="plus"
-    >{{ $t('cmdb.ciType.addRelation') }}</a-button
-    >
+    <div v-if="!isInGrantComp" class="relation-table-add">
+      <a-button
+        type="primary"
+        @click="handleCreate"
+        ghost
+        class="ops-button-ghost"
+      >
+        <ops-icon type="veops-increase" />
+        {{ $t('create') }}
+      </a-button>
+    </div>
     <vxe-table
+      ref="xTable"
       stripe
       :data="tableData"
       size="small"
@@ -84,7 +87,7 @@
               show-search
               optionFilterProp="title"
             >
-            <a-select-option
+              <a-select-option
                 v-for="attr in filterAttributes(row.isParent ? row.attributes : attributes)"
                 :key="attr.id"
                 :value="attr.id"
@@ -178,6 +181,7 @@
           >
             <a-select-option :value="CIType.id" :key="CIType.id" v-for="CIType in CITypes">
               {{ CIType.alias || CIType.name }}
+              <span class="model-select-name">({{ CIType.name }})</span>
             </a-select-option>
           </a-select>
         </a-form-item>
@@ -311,6 +315,8 @@ export default {
       tableAttrList: [],
       modalAttrList: [],
       modalChildAttributes: [],
+      currentEditData: null,
+      isContinueCloseEdit: false,
     }
   },
   computed: {
@@ -341,7 +347,7 @@ export default {
       if (!this.isInGrantComp) {
         await this.getCITypeParent()
       }
-      this.getCITypeChildren()
+      await this.getCITypeChildren()
     },
     async getCITypeParent() {
       await getCITypeParent(this.CITypeId).then((res) => {
@@ -358,8 +364,8 @@ export default {
         })
       })
     },
-    getCITypeChildren() {
-      getCITypeChildren(this.CITypeId).then((res) => {
+    async getCITypeChildren() {
+      await getCITypeChildren(this.CITypeId).then((res) => {
         const data = res.children.map((obj) => {
           const parentAndChildAttrList = this.handleAttrList(obj)
 
@@ -511,37 +517,56 @@ export default {
       if (row.isParent) return 'relation-table-parent'
     },
     handleEditActived({ row }) {
-      const tableAttrList = []
+      this.$nextTick(async () => {
+        if (this.isContinueCloseEdit) {
+          const editRecord = this.$refs.xTable.getEditRecord()
+          const { row: editRow, column } = editRecord
+          this.currentEditData = {
+            row: editRow,
+            column
+          }
+          return
+        }
+        const tableAttrList = []
 
-      const length = Math.min(row?.parent_attr_ids?.length || 0, row.child_attr_ids?.length || 0)
-      if (length) {
-        for (let i = 0; i < length; i++) {
+        const length = Math.min(row?.parent_attr_ids?.length || 0, row.child_attr_ids?.length || 0)
+        if (length) {
+          for (let i = 0; i < length; i++) {
+            tableAttrList.push({
+              id: uuidv4(),
+              parentAttrId: row?.parent_attr_ids?.[i] ?? undefined,
+              childAttrId: row?.child_attr_ids?.[i] ?? undefined
+            })
+          }
+        } else {
           tableAttrList.push({
             id: uuidv4(),
-            parentAttrId: row?.parent_attr_ids?.[i] ?? undefined,
-            childAttrId: row?.child_attr_ids?.[i] ?? undefined
+            parentAttrId: undefined,
+            childAttrId: undefined
           })
         }
-      } else {
-        tableAttrList.push({
-          id: uuidv4(),
-          parentAttrId: undefined,
-          childAttrId: undefined
-        })
-      }
-      this.$set(this, 'tableAttrList', tableAttrList)
+        this.$set(this, 'tableAttrList', tableAttrList)
+      })
     },
     async handleEditClose({ row }) {
+      if (this.currentEditData) {
+        this.currentEditData = null
+        return
+      }
+
+      this.isContinueCloseEdit = true
+
       const { source_ci_type_id: parentId, id: childrenId, constraint, relation_type } = row
       const _find = this.relationTypes.find((item) => item.name === relation_type)
       const relation_type_id = _find?.id
-      
+
       const {
         parent_attr_ids,
         child_attr_ids,
         validate
       } = this.handleValidateAttrList(this.tableAttrList)
       if (!validate) {
+        this.isContinueCloseEdit = false
         return
       }
 
@@ -550,8 +575,17 @@ export default {
         constraint,
         parent_attr_ids,
         child_attr_ids,
-      }).finally(() => {
-        this.getData()
+      }).finally(async () => {
+        await this.getData()
+        this.isContinueCloseEdit = false
+
+        if (this.currentEditData) {
+          setTimeout(async () => {
+            const { fullData } = this.$refs.xTable.getTableData()
+            const findEdit = fullData.find((item) => item.id === this?.currentEditData?.row?.id)
+            await this.$refs.xTable.setEditRow(findEdit, 'attributeAssociation')
+          })
+        }
       })
     },
     getAttrNameById(attributes, id) {
@@ -567,8 +601,14 @@ export default {
       })
     },
     filterAttributes(attributes) {
-      // filter password/json/is_list
-      return attributes.filter((attr) => !attr.is_password && !attr.is_list && attr.value_type !== '6')
+      // filter password/json/is_list/longText/bool/reference
+      return attributes.filter((attr) => {
+        if (attr.value_type === '2' && !attr.is_index) {
+          return false
+        }
+
+        return !attr.is_password && !attr.is_list && attr.value_type !== '6' && !attr.is_bool && !attr.is_reference
+      })
     },
     addTableAttr() {
       this.tableAttrList.push({
@@ -615,6 +655,12 @@ export default {
   /deep/ .vxe-cell {
     max-height: max-content !important;
   }
+
+  &-add {
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: flex-end;
+  }
 }
 .table-attribute-row {
   display: inline-flex;
@@ -637,19 +683,24 @@ export default {
 .modal-attribute-action {
   margin-left: 5px;
 }
-</style>
 
-<style lang="less">
-.ops-stripe-table .vxe-body--row.row--stripe.relation-table-divider {
-  background-color: #b1b8d3 !important;
+.model-select-name {
+  font-size: 12px;
+  color: #A5A9BC;
 }
-.ops-stripe-table .vxe-body--row.relation-table-parent {
-  background-color: #f5f8ff !important;
-}
-.relation-table-divider {
-  td {
-    height: 1px !important;
-    line-height: 1px !important;
+
+.ops-stripe-table {
+  /deep/ .relation-table-divider {
+    background-color: #b1b8d3 !important;
+
+    td {
+      height: 2px !important;
+      line-height: 2px !important;
+    }
+  }
+
+  /deep/ .relation-table-parent {
+    background-color: #f5f8ff !important;
   }
 }
 </style>

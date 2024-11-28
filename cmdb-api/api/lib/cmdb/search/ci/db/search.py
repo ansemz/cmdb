@@ -4,8 +4,8 @@
 from __future__ import unicode_literals
 
 import copy
+import six
 import time
-
 from flask import current_app
 from flask_login import current_user
 from jinja2 import Template
@@ -15,6 +15,7 @@ from api.extensions import db
 from api.lib.cmdb.cache import AttributeCache
 from api.lib.cmdb.cache import CITypeCache
 from api.lib.cmdb.ci import CIManager
+from api.lib.cmdb.const import BUILTIN_ATTRIBUTES
 from api.lib.cmdb.const import PermEnum
 from api.lib.cmdb.const import ResourceTypeEnum
 from api.lib.cmdb.const import RetKey
@@ -66,6 +67,7 @@ class Search(object):
         self.use_id_filter = use_id_filter
         self.use_ci_filter = use_ci_filter
         self.only_ids = only_ids
+        self.multi_type_has_ci_filter = False
 
         self.valid_type_names = []
         self.type2filter_perms = dict()
@@ -104,35 +106,56 @@ class Search(object):
         else:
             raise SearchError(ErrFormat.attribute_not_found.format(key))
 
-    def _type_query_handler(self, v, queries):
+    def _type_query_handler(self, v, queries, is_sub=False):
         new_v = v[1:-1].split(";") if v.startswith("(") and v.endswith(")") else [v]
+        type_num = len(new_v)
+        type_id_list = []
         for _v in new_v:
             ci_type = CITypeCache.get(_v)
 
-            if len(new_v) == 1 and not self.sort and ci_type and ci_type.default_order_attr:
+            if type_num == 1 and not self.sort and ci_type and ci_type.default_order_attr:
                 self.sort = ci_type.default_order_attr
 
             if ci_type is not None:
                 if self.valid_type_names == "ALL" or ci_type.name in self.valid_type_names:
-                    self.type_id_list.append(str(ci_type.id))
-                    if ci_type.id in self.type2filter_perms:
+                    if not is_sub:
+                        self.type_id_list.append(str(ci_type.id))
+                    type_id_list.append(str(ci_type.id))
+                    if ci_type.id in self.type2filter_perms and not is_sub:
                         ci_filter = self.type2filter_perms[ci_type.id].get('ci_filter')
                         if ci_filter and self.use_ci_filter and not self.use_id_filter:
                             sub = []
                             ci_filter = Template(ci_filter).render(user=current_user)
                             for i in ci_filter.split(','):
-                                if i.startswith("~") and not sub:
-                                    queries.append(i)
+                                if type_num == 1:
+                                    if i.startswith("~") and not sub:
+                                        queries.append(i)
+                                    else:
+                                        sub.append(i)
                                 else:
                                     sub.append(i)
                             if sub:
-                                queries.append(dict(operator="&", queries=sub))
+                                if type_num == 1:
+                                    queries.append(dict(operator="&", queries=sub))
+                                else:
+                                    if str(ci_type.id) in self.type_id_list:
+                                        self.type_id_list.remove(str(ci_type.id))
+                                    type_id_list.remove(str(ci_type.id))
+                                    sub.extend([i for i in queries[1:] if isinstance(i, six.string_types)])
 
+                                    sub.insert(0, "_type:{}".format(ci_type.id))
+                                    queries.append(dict(operator="|", queries=sub))
+                                    self.multi_type_has_ci_filter = True
                         if self.type2filter_perms[ci_type.id].get('attr_filter'):
-                            if not self.fl:
-                                self.fl = set(self.type2filter_perms[ci_type.id]['attr_filter'])
+                            if type_num == 1:
+                                if not self.fl:
+                                    self.fl = set(self.type2filter_perms[ci_type.id]['attr_filter'])
+                                else:
+                                    self.fl = set(self.fl) & set(self.type2filter_perms[ci_type.id]['attr_filter'])
                             else:
-                                self.fl = set(self.fl) & set(self.type2filter_perms[ci_type.id]['attr_filter'])
+                                self.fl = self.fl or {}
+                                if not self.fl or isinstance(self.fl, dict):
+                                    self.fl[ci_type.id] = set(self.type2filter_perms[ci_type.id]['attr_filter'])
 
                         if self.type2filter_perms[ci_type.id].get('id_filter') and self.use_id_filter:
 
@@ -146,13 +169,17 @@ class Search(object):
             else:
                 raise SearchError(ErrFormat.ci_type_not_found2.format(_v))
 
-        if self.type_id_list:
-            type_ids = ",".join(self.type_id_list)
+        if type_num != len(self.type_id_list) and queries and queries[0].startswith('_type') and not is_sub:
+            queries[0] = "_type:({})".format(";".join(self.type_id_list))
+
+        if type_id_list:
+            type_ids = ",".join(type_id_list)
             _query_sql = QUERY_CI_BY_TYPE.format(type_ids)
-            if self.only_type_query:
+            if self.only_type_query or self.multi_type_has_ci_filter:
                 return _query_sql
-            else:
-                return ""
+        elif type_num > 1:  # there must be instance-level access control
+            return "select c_cis.id as ci_id from c_cis where c_cis.id=0"
+
         return ""
 
     @staticmethod
@@ -229,7 +256,7 @@ class Search(object):
             return ret_sql.format(query_sql, "ORDER BY B.ci_id {1} LIMIT {0:d}, {2};".format(
                 (self.page - 1) * self.count, sort_type, self.count))
 
-        elif self.type_id_list:
+        elif self.type_id_list and not self.multi_type_has_ci_filter:
             self.query_sql = "SELECT B.ci_id FROM ({0}) AS B {1}".format(
                 query_sql,
                 "INNER JOIN c_cis on c_cis.id=B.ci_id WHERE c_cis.type_id IN ({0}) ".format(
@@ -254,7 +281,7 @@ class Search(object):
     def __sort_by_type(self, sort_type, query_sql):
         ret_sql = "SELECT SQL_CALC_FOUND_ROWS DISTINCT B.ci_id FROM ({0}) AS B {1}"
 
-        if self.type_id_list:
+        if self.type_id_list and not self.multi_type_has_ci_filter:
             self.query_sql = "SELECT B.ci_id FROM ({0}) AS B {1}".format(
                 query_sql,
                 "INNER JOIN c_cis on c_cis.id=B.ci_id WHERE c_cis.type_id IN ({0}) ".format(
@@ -278,16 +305,23 @@ class Search(object):
                     (self.page - 1) * self.count, sort_type, self.count))
 
     def __sort_by_field(self, field, sort_type, query_sql):
-        attr = AttributeCache.get(field)
-        attr_id = attr.id
+        if field not in BUILTIN_ATTRIBUTES:
 
-        table_name = TableMap(attr=attr).table_name
-        _v_query_sql = """SELECT {0}.ci_id, {1}.value
-                          FROM ({2}) AS {0} INNER JOIN {1} ON {1}.ci_id = {0}.ci_id
-                          WHERE {1}.attr_id = {3}""".format("ALIAS", table_name, query_sql, attr_id)
-        new_table = _v_query_sql
+            attr = AttributeCache.get(field)
+            attr_id = attr.id
 
-        if self.only_type_query or not self.type_id_list:
+            table_name = TableMap(attr=attr).table_name
+            _v_query_sql = """SELECT ALIAS.ci_id, {0}.value
+                              FROM ({1}) AS ALIAS INNER JOIN {0} ON {0}.ci_id = ALIAS.ci_id
+                              WHERE {0}.attr_id = {2}""".format(table_name, query_sql, attr_id)
+            new_table = _v_query_sql
+        else:
+            _v_query_sql = """SELECT c_cis.id AS ci_id, c_cis.{0} AS value
+                                          FROM c_cis  INNER JOIN ({1}) AS ALIAS ON ALIAS.ci_id = c_cis.id""".format(
+                field[1:], query_sql)
+            new_table = _v_query_sql
+
+        if self.only_type_query or not self.type_id_list or self.multi_type_has_ci_filter:
             return ("SELECT SQL_CALC_FOUND_ROWS DISTINCT C.ci_id FROM ({0}) AS C ORDER BY C.value {2} "
                     "LIMIT {1:d}, {3};".format(new_table, (self.page - 1) * self.count, sort_type, self.count))
 
@@ -325,7 +359,9 @@ class Search(object):
                            INNER JOIN ({2}) as {3} USING(ci_id)""".format(query_sql, alias, _query_sql, alias + "A")
 
         elif operator == "|" or operator == "|~":
-            query_sql = "SELECT * FROM ({0}) as {1} UNION ALL ({2})".format(query_sql, alias, _query_sql)
+            query_sql = "SELECT * FROM ({0}) as {1} UNION ALL SELECT * FROM ({2}) as {3}".format(query_sql, alias,
+                                                                                                 _query_sql,
+                                                                                                 alias + "A")
 
         elif operator == "~":
             query_sql = """SELECT * FROM ({0}) as {1} LEFT JOIN ({2}) as {3} USING(ci_id)
@@ -430,14 +466,14 @@ class Search(object):
 
         return result
 
-    def __query_by_attr(self, q, queries, alias):
+    def __query_by_attr(self, q, queries, alias, is_sub=False):
         k = q.split(":")[0].strip()
         v = "\:".join(q.split(":")[1:]).strip()
         v = v.replace("'", "\\'")
         v = v.replace('"', '\\"')
         field, field_type, operator, attr = self._attr_name_proc(k)
         if field == "_type":
-            _query_sql = self._type_query_handler(v, queries)
+            _query_sql = self._type_query_handler(v, queries, is_sub)
 
         elif field == "_id":
             _query_sql = self._id_query_handler(v)
@@ -450,6 +486,9 @@ class Search(object):
 
             if field_type == ValueTypeEnum.DATE and len(v) == 10:
                 v = "{} 00:00:00".format(v)
+
+            if field_type == ValueTypeEnum.BOOL and "*" not in str(v):
+                v = str(int(v in current_app.config.get('BOOL_TRUE')))
 
             # in query
             if v.startswith("(") and v.endswith(")"):
@@ -481,19 +520,20 @@ class Search(object):
 
         return alias, _query_sql, operator
 
-    def __query_build_by_field(self, queries, is_first=True, only_type_query_special=True, alias='A', operator='&'):
+    def __query_build_by_field(self, queries, is_first=True, only_type_query_special=True, alias='A', operator='&',
+                               is_sub=False):
         query_sql = ""
 
         for q in queries:
             _query_sql = ""
             if isinstance(q, dict):
-                alias, _query_sql, operator = self.__query_build_by_field(q['queries'], True, True, alias)
-                current_app.logger.info(_query_sql)
-                current_app.logger.info((operator, is_first, alias))
+                alias, _query_sql, operator = self.__query_build_by_field(q['queries'], True, True, alias, is_sub=True)
+                # current_app.logger.info(_query_sql)
+                # current_app.logger.info((operator, is_first, alias))
                 operator = q['operator']
 
             elif ":" in q and not q.startswith("*"):
-                alias, _query_sql, operator = self.__query_by_attr(q, queries, alias)
+                alias, _query_sql, operator = self.__query_by_attr(q, queries, alias, is_sub)
             elif q == "*":
                 continue
             elif q:
@@ -544,7 +584,6 @@ class Search(object):
         queries = handle_arg_list(self.orig_query)
         queries = self._extra_handle_query_expr(queries)
         queries = self.__confirm_type_first(queries)
-        current_app.logger.debug(queries)
 
         _, query_sql, _ = self.__query_build_by_field(queries)
 
@@ -582,13 +621,16 @@ class Search(object):
         return facet_result
 
     def _fl_build(self):
-        _fl = list()
-        for f in self.fl:
-            k, _, _, _ = self._attr_name_proc(f)
-            if k:
-                _fl.append(k)
+        if isinstance(self.fl, list):
+            _fl = list()
+            for f in self.fl:
+                k, _, _, _ = self._attr_name_proc(f)
+                if k:
+                    _fl.append(k)
 
-        return _fl
+            return _fl
+        else:
+            return self.fl
 
     def search(self):
         numfound, ci_ids = self._query_build_raw()
@@ -607,6 +649,8 @@ class Search(object):
         if ci_ids:
             response = CIManager.get_cis_by_ids(ci_ids, ret_key=self.ret_key, fields=_fl, excludes=self.excludes)
         for res in response:
+            if not res:
+                continue
             ci_type = res.get("ci_type")
             if ci_type not in counter.keys():
                 counter[ci_type] = 0

@@ -18,6 +18,11 @@
       >{{ $t('download') }}</a-button
       >
     </div>
+    <div v-if="fromCronJob" class="resource-search-tip">
+      <div class="resource-search-tip-item">{{ $t('cmdb.ciType.resourceSearchTip1') }}</div>
+      <div class="resource-search-tip-item">{{ $t('cmdb.ciType.resourceSearchTip2') }}</div>
+      <div class="resource-search-tip-item">{{ $t('cmdb.ciType.resourceSearchTip3') }}</div>
+    </div>
     <SearchForm
       ref="search"
       :type="type"
@@ -44,7 +49,7 @@
       size="small"
       row-id="_id"
       :loading="loading"
-      :height="fromCronJob ? windowHeight - 180 : windowHeight - 240"
+      :height="fromCronJob ? windowHeight - 280 : windowHeight - 240"
       show-header-overflow
       highlight-hover-row
       :data="instanceList"
@@ -96,18 +101,32 @@
           :minWidth="100"
           :cell-type="col.value_type === '2' ? 'string' : 'auto'"
         >
-          <template v-if="col.value_type === '6' || col.is_link || col.is_password || col.is_choice" #default="{row}">
-            <span v-if="col.value_type === '6' && row[col.field]">{{ JSON.stringify(row[col.field]) }}</span>
-            <a
-              v-else-if="col.is_link && row[col.field]"
-              :href="
-                row[col.field].startsWith('http') || row[col.field].startsWith('https')
-                  ? `${row[col.field]}`
-                  : `http://${row[col.field]}`
-              "
-              target="_blank"
-            >{{ row[col.field] }}</a
-            >
+          <template v-if="col.value_type === '6' || col.is_link || col.is_password || col.is_choice || col.is_reference" #default="{row}">
+            <template v-if="col.is_reference && row[col.field]" >
+              <a
+                v-for="(ciId) in (col.is_list ? row[col.field] : [row[col.field]])"
+                :key="ciId"
+                :href="`/cmdb/cidetail/${col.reference_type_id}/${ciId}`"
+                target="_blank"
+              >
+                {{ getReferenceAttrValue(ciId, col) }}
+              </a>
+            </template>
+            <span v-else-if="col.value_type === '6' && row[col.field]">{{ JSON.stringify(row[col.field]) }}</span>
+            <template v-else-if="col.is_link && row[col.field]">
+              <a
+                v-for="(item, linkIndex) in (col.is_list ? row[col.field] : [row[col.field]])"
+                :key="linkIndex"
+                :href="
+                  item.startsWith('http') || item.startsWith('https')
+                    ? `${item}`
+                    : `http://${item}`
+                "
+                target="_blank"
+              >
+                {{ getChoiceValueLabel(col, item) || item }}
+              </a>
+            </template>
             <PasswordField
               v-else-if="col.is_password && row[col.field]"
               :ci_id="row._id"
@@ -124,11 +143,13 @@
                     margin: '2px',
                     ...getChoiceValueStyle(col, value),
                   }"
-                ><ops-icon
-                  :style="{ color: getChoiceValueIcon(col, value).color }"
-                  :type="getChoiceValueIcon(col, value).name"
-                />{{ value }}</span
                 >
+                  <ops-icon
+                    :style="{ color: getChoiceValueIcon(col, value).color }"
+                    :type="getChoiceValueIcon(col, value).name"
+                  />
+                  {{ getChoiceValueLabel(col, value) || value }}
+                </span>
               </template>
               <span
                 v-else
@@ -143,8 +164,8 @@
                   :style="{ color: getChoiceValueIcon(col, row[col.field]).color }"
                   :type="getChoiceValueIcon(col, row[col.field]).name"
                 />
-                {{ row[col.field] }}</span
-              >
+                {{ getChoiceValueLabel(col, row[col.field]) || row[col.field] }}
+              </span>
             </template>
           </template>
         </vxe-column>
@@ -245,6 +266,8 @@ export default {
       sortByTable: undefined,
       loading: false,
       columnsGroup: [],
+      referenceShowAttrNameMap: {},
+      referenceCIIdMap: {},
     }
   },
   computed: {
@@ -424,12 +447,99 @@ export default {
           await Promise.all(promises1).then(() => {
             this.columnsGroup = [..._commonColumnsGroup, ..._columnsGroup]
             this.instanceList = res['result']
+            this.handlePerference()
           })
         })
         .finally(() => {
           this.loading = false
         })
     },
+
+    handlePerference() {
+      let needRequiredCIType = []
+      this.columnsGroup.forEach((group) => {
+        group.children.forEach((col) => {
+          if (col?.is_reference && col?.reference_type_id) {
+            needRequiredCIType.push(col)
+          }
+        })
+      })
+      needRequiredCIType = _.uniq(needRequiredCIType)
+
+      if (!needRequiredCIType.length) {
+        this.referenceShowAttrNameMap = {}
+        this.referenceCIIdMap = {}
+        return
+      }
+
+      this.handleReferenceShowAttrName(needRequiredCIType)
+      this.handleReferenceCIIdMap(needRequiredCIType)
+    },
+
+    async handleReferenceShowAttrName(needRequiredCIType) {
+      const res = await getCITypes({
+        type_ids: needRequiredCIType.map((col) => col.reference_type_id).join(',')
+      })
+
+      const map = {}
+      res.ci_types.forEach((ciType) => {
+        map[ciType.id] = ciType?.show_name || ciType?.unique_name || ''
+      })
+
+      this.referenceShowAttrNameMap = map
+    },
+
+    async handleReferenceCIIdMap(needRequiredCIType) {
+      const map = {}
+      this.instanceList.forEach((row) => {
+        needRequiredCIType.forEach((col) => {
+          const ids = Array.isArray(row[col.field]) ? row[col.field] : row[col.field] ? [row[col.field]] : []
+          if (ids.length) {
+            if (!map?.[col.reference_type_id]) {
+              map[col.reference_type_id] = {}
+            }
+            ids.forEach((id) => {
+              map[col.reference_type_id][id] = {}
+            })
+          }
+        })
+      })
+
+      if (!Object.keys(map).length) {
+        this.referenceCIIdMap = {}
+        return
+      }
+
+      const allRes = await Promise.all(
+        Object.keys(map).map((key) => {
+          return searchCI({
+            q: `_type:${key},_id:(${Object.keys(map[key]).join(';')})`,
+            count: 9999
+          })
+        })
+      )
+
+      allRes.forEach((res) => {
+        res.result.forEach((item) => {
+          if (map?.[item._type]?.[item._id]) {
+            map[item._type][item._id] = item
+          }
+        })
+      })
+
+      this.referenceCIIdMap = map
+    },
+
+    getReferenceAttrValue(id, col) {
+      const ci = this?.referenceCIIdMap?.[col?.reference_type_id]?.[id]
+      if (!ci) {
+        return id
+      }
+
+      const attrName = this.referenceShowAttrNameMap?.[col.reference_type_id]
+      return ci?.[attrName] || id
+    },
+
     getColumns(data, attrList) {
       const width = document.getElementById('resource_search').clientWidth - 50
       return getCITableColumns(data, attrList, width).map((item) => {
@@ -474,12 +584,29 @@ export default {
       }
       return {}
     },
+    getChoiceValueLabel(col, colValue) {
+      const _find = col?.filters?.find((item) => String(item[0]) === String(colValue))
+      if (_find) {
+        return _find[1]?.label || ''
+      }
+      return ''
+    },
     handleExport() {
+      const preferenceAttrList = [
+        { id: `ci_type_alias`, value: 'ci_type_alias', label: this.$t('cmdb.ciType.ciType') },
+        ...this.columnsGroup,
+      ]
+
+      preferenceAttrList.forEach((attr) => {
+        if (Array.isArray(attr?.children) && attr?.children?.length) {
+          attr.children = attr.children.filter((child) => {
+            return !child?.is_reference
+          })
+        }
+      })
+
       this.$refs.batchDownload.open({
-        preferenceAttrList: [
-          { id: `ci_type_alias`, value: 'ci_type_alias', label: this.$t('cmdb.ciType.ciType') },
-          ...this.columnsGroup,
-        ],
+        preferenceAttrList,
       })
     },
     batchDownload({ filename, type, checkedKeys }) {
@@ -503,6 +630,7 @@ export default {
             return { ...item }
           }),
         ],
+        original: true,
         download: false,
       })
       this.selectedRowKeys = []
@@ -568,5 +696,14 @@ export default {
   background-color: #fff;
   padding: 20px;
   border-radius: @border-radius-box;
+
+  &-tip {
+    margin-bottom: 16px;
+
+    &-item {
+      font-size: 12px;
+      color: @text-color_4
+    }
+  }
 }
 </style>

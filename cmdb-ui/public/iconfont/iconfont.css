@@ -1,8 +1,8 @@
 @font-face {
   font-family: "iconfont"; /* Project id 3857903 */
-  src: url('iconfont.woff2?t=1717726223524') format('woff2'),
-       url('iconfont.woff?t=1717726223524') format('woff'),
-       url('iconfont.ttf?t=1717726223524') format('truetype');
+  src: url('iconfont.woff2?t=1732673294759') format('woff2'),
+       url('iconfont.woff?t=1732673294759') format('woff'),
+       url('iconfont.ttf?t=1732673294759') format('truetype');
 }
 
 .iconfont {
@@ -11,6 +11,718 @@
   font-style: normal;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.veops-rear:before {
+  content: "\ea02";
+}
+
+.veops-front:before {
+  content: "\ea03";
+}
+
+.veops-xianggang:before {
+  content: "\ea01";
+}
+
+.a-veops-device2:before {
+  content: "\ea00";
+}
+
+.a-veops-room1:before {
+  content: "\e9ff";
+}
+
+.veops-IDC:before {
+  content: "\e9fe";
+}
+
+.veops-region:before {
+  content: "\e9fd";
+}
+
+.veops-device:before {
+  content: "\e9fb";
+}
+
+.veops-cabinet:before {
+  content: "\e9fc";
+}
+
+.veops-data_center:before {
+  content: "\e9f9";
+}
+
+.ops-setting-holidays:before {
+  content: "\e9fa";
+}
+
+.ops-itsm-logs:before {
+  content: "\e9f8";
+}
+
+.ops-setting-workday:before {
+  content: "\e9f6";
+}
+
+.ops-setting-holiday:before {
+  content: "\e9f7";
+}
+
+.ops-setting-festival:before {
+  content: "\e9f5";
+}
+
+.itsm-calc:before {
+  content: "\e9f4";
+}
+
+.itsm-reports_4:before {
+  content: "\e9f3";
+}
+
+.veops-folder:before {
+  content: "\e9f2";
+}
+
+.veops-entire_network_:before {
+  content: "\e9f1";
+}
+
+.veops-subnet:before {
+  content: "\e9f0";
+}
+
+.veops-map_view:before {
+  content: "\e9ef";
+}
+
+.veops-recycle:before {
+  content: "\e9ee";
+}
+
+.veops-catalog:before {
+  content: "\e9ed";
+}
+
+.veops-ipam:before {
+  content: "\e9ec";
+}
+
+.cmdb-calc:before {
+  content: "\e9eb";
+}
+
+.ai-users:before {
+  content: "\e9ea";
+}
+
+.ai-tokens:before {
+  content: "\e9e9";
+}
+
+.oneterm-mysql:before {
+  content: "\e9e8";
+}
+
+.oneterm-redis:before {
+  content: "\e9e7";
+}
+
+.veops-sign_out:before {
+  content: "\e9e6";
+}
+
+.veops-company:before {
+  content: "\e9e5";
+}
+
+.veops-emails:before {
+  content: "\e9e4";
+}
+
+.veops-switch:before {
+  content: "\e9e3";
+}
+
+.qiyeweixin:before {
+  content: "\e9e2";
+}
+
+.veops-progress:before {
+  content: "\e9e1";
+}
+
+.veops-completed:before {
+  content: "\e9e0";
+}
+
+.itsm-ticketTime:before {
+  content: "\e9df";
+}
+
+.veops-notification:before {
+  content: "\e9dc";
+}
+
+.a-veops-account1:before {
+  content: "\e9dd";
+}
+
+.veops-personal:before {
+  content: "\e9de";
+}
+
+.itsm-customer_satisfaction2:before {
+  content: "\e9da";
+}
+
+.itsm-over2:before {
+  content: "\e9db";
+}
+
+.veops-search1:before {
+  content: "\e9d9";
+}
+
+.itsm-customer_satisfaction:before {
+  content: "\e9d8";
+}
+
+.itsm-over:before {
+  content: "\e9d7";
+}
+
+.itsm-request:before {
+  content: "\e9d6";
+}
+
+.itsm-release:before {
+  content: "\e9d5";
+}
+
+.veops-link:before {
+  content: "\e9d4";
+}
+
+.oneterm-command_record:before {
+  content: "\e9d3";
+}
+
+.ai-question:before {
+  content: "\e9d2";
+}
+
+.ai-sending:before {
+  content: "\e9d1";
+}
+
+.ai-dialogue:before {
+  content: "\e9d0";
+}
+
+.ai-report2:before {
+  content: "\e9cf";
+}
+
+.ai-delete:before {
+  content: "\e9cd";
+}
+
+.caise-knowledge:before {
+  content: "\e9ce";
+}
+
+.ai-article:before {
+  content: "\e9cc";
+}
+
+.ai-model_setup1:before {
+  content: "\e9cb";
+}
+
+.ai-report:before {
+  content: "\e9ca";
+}
+
+.ai-customer_service:before {
+  content: "\e9c9";
+}
+
+.oneterm-connect1:before {
+  content: "\e9c6";
+}
+
+.oneterm-session1:before {
+  content: "\e9c7";
+}
+
+.oneterm-assets:before {
+  content: "\e9c8";
+}
+
+.a-oneterm-ssh1:before {
+  content: "\e9c3";
+}
+
+.a-oneterm-ssh2:before {
+  content: "\e9c4";
+}
+
+.oneterm-rdp:before {
+  content: "\e9c5";
+}
+
+.caise-websphere:before {
+  content: "\e9c2";
+}
+
+.caise-vps:before {
+  content: "\e9c1";
+}
+
+.caise-F5:before {
+  content: "\e9c0";
+}
+
+.caise-HAProxy:before {
+  content: "\e9bf";
+}
+
+.caise-JBoss:before {
+  content: "\e9be";
+}
+
+.caise-dongfangtong:before {
+  content: "\e9bd";
+}
+
+.caise-kafka:before {
+  content: "\e9b7";
+}
+
+.caise-weblogic:before {
+  content: "\e9b8";
+}
+
+.caise-TDSQL:before {
+  content: "\e9b9";
+}
+
+.caise-kingbase:before {
+  content: "\e9ba";
+}
+
+.caise-dameng:before {
+  content: "\e9bb";
+}
+
+.caise-TIDB:before {
+  content: "\e9bc";
+}
+
+.veops-expand:before {
+  content: "\e9b6";
+}
+
+.caise-public_cloud:before {
+  content: "\e9b1";
+}
+
+.caise-system:before {
+  content: "\e9b2";
+}
+
+.caise-IPAM:before {
+  content: "\e9b3";
+}
+
+.caise-hyperV:before {
+  content: "\e9b4";
+}
+
+.caise-data_center2:before {
+  content: "\e9b5";
+}
+
+.caise-hardware:before {
+  content: "\e9ad";
+}
+
+.caise-computer:before {
+  content: "\e9ae";
+}
+
+.caise-network_devices:before {
+  content: "\e9af";
+}
+
+.caise-storage_device:before {
+  content: "\e9b0";
+}
+
+.caise-load_balancing:before {
+  content: "\e9ab";
+}
+
+.caise-message_queue:before {
+  content: "\e9ac";
+}
+
+.caise-websever:before {
+  content: "\e9aa";
+}
+
+.caise-middleware:before {
+  content: "\e9a9";
+}
+
+.caise-database:before {
+  content: "\e9a7";
+}
+
+.caise-business:before {
+  content: "\e9a8";
+}
+
+.caise-virtualization:before {
+  content: "\e9a6";
+}
+
+.caise-storage_pool:before {
+  content: "\e9a4";
+}
+
+.caise-storage_volume1:before {
+  content: "\e9a5";
+}
+
+.ciase-aix:before {
+  content: "\e9a3";
+}
+
+.caise_pool:before {
+  content: "\e99b";
+}
+
+.caise-ip_address:before {
+  content: "\e99c";
+}
+
+.caise-computer_room:before {
+  content: "\e99d";
+}
+
+.caise-rack:before {
+  content: "\e99e";
+}
+
+.caise-pc:before {
+  content: "\e99f";
+}
+
+.caise-bandwidth_line:before {
+  content: "\e9a0";
+}
+
+.caise-fiber:before {
+  content: "\e9a1";
+}
+
+.caise-disk_array:before {
+  content: "\e9a2";
+}
+
+.veops-group:before {
+  content: "\e99a";
+}
+
+.veops-inheritance:before {
+  content: "\e999";
+}
+
+.veops-department:before {
+  content: "\e998";
+}
+
+.duose-changwenben1:before {
+  content: "\e997";
+}
+
+.duose-quote:before {
+  content: "\e995";
+}
+
+.duose-boole:before {
+  content: "\e996";
+}
+
+.veops-rule1:before {
+  content: "\e994";
+}
+
+.veops-operation_report:before {
+  content: "\e993";
+}
+
+.veops-ranking1:before {
+  content: "\e992";
+}
+
+.veops-ranking2:before {
+  content: "\e98f";
+}
+
+.veops-ranking3:before {
+  content: "\e990";
+}
+
+.veops-ranking4:before {
+  content: "\e991";
+}
+
+.veops-title5:before {
+  content: "\e98d";
+}
+
+.veops-repair1:before {
+  content: "\e98e";
+}
+
+.veops-ticket:before {
+  content: "\e988";
+}
+
+.veops-model4:before {
+  content: "\e989";
+}
+
+.veops-resource21:before {
+  content: "\e98a";
+}
+
+.veops-relationship3:before {
+  content: "\e98b";
+}
+
+.veops-title6:before {
+  content: "\e98c";
+}
+
+.veops-resource11:before {
+  content: "\e97a";
+}
+
+.veops-model11:before {
+  content: "\e97b";
+}
+
+.veops-relationship1:before {
+  content: "\e97c";
+}
+
+.veops-title1:before {
+  content: "\e97d";
+}
+
+.veops-title2:before {
+  content: "\e97e";
+}
+
+.veops-model2:before {
+  content: "\e97f";
+}
+
+.veops-resource2:before {
+  content: "\e980";
+}
+
+.veops-warehousing:before {
+  content: "\e981";
+}
+
+.veops-relationship2:before {
+  content: "\e982";
+}
+
+.veops-title3:before {
+  content: "\e983";
+}
+
+.veops-rule2:before {
+  content: "\e984";
+}
+
+.veops-model3:before {
+  content: "\e985";
+}
+
+.veops-title4:before {
+  content: "\e986";
+}
+
+.veops-rule3:before {
+  content: "\e987";
+}
+
+.veops-decline:before {
+  content: "\e978";
+}
+
+.veops-rise:before {
+  content: "\e979";
+}
+
+.caise-data_center:before {
+  content: "\e96f";
+}
+
+.caise-folder:before {
+  content: "\e970";
+}
+
+.caise-resource_pool:before {
+  content: "\e971";
+}
+
+.caise-network:before {
+  content: "\e972";
+}
+
+.caise-distributed_switch:before {
+  content: "\e973";
+}
+
+.caise-standard_switch:before {
+  content: "\e974";
+}
+
+.caise-host_cluster:before {
+  content: "\e975";
+}
+
+.caise-storage_cluster:before {
+  content: "\e976";
+}
+
+.caise-data_storage:before {
+  content: "\e977";
+}
+
+.veops-account:before {
+  content: "\e96e";
+}
+
+.veops-collect:before {
+  content: "\e96d";
+}
+
+.veops-collected:before {
+  content: "\e96c";
+}
+
+.veops-text:before {
+  content: "\e96b";
+}
+
+.veops-markdown:before {
+  content: "\e96a";
+}
+
+.veops-bar_horizontal:before {
+  content: "\e860";
+}
+
+.veops-gauge:before {
+  content: "\e965";
+}
+
+.veops-heatmap:before {
+  content: "\e966";
+}
+
+.veops-treemap:before {
+  content: "\e967";
+}
+
+.veops-radar:before {
+  content: "\e968";
+}
+
+.veops-data:before {
+  content: "\e969";
+}
+
+.veops-import:before {
+  content: "\e963";
+}
+
+.veops-batch_operation:before {
+  content: "\e964";
+}
+
+.cmdb-enterprise_edition:before {
+  content: "\e962";
+}
+
+.ops-KVM:before {
+  content: "\e961";
+}
+
+.cmdb-vcenter:before {
+  content: "\e960";
+}
+
+.cmdb-manual_warehousing:before {
+  content: "\e95f";
+}
+
+.cmdb-not_warehousing:before {
+  content: "\e95d";
+}
+
+.cmdb-warehousing:before {
+  content: "\e95e";
+}
+
+.cmdb-prompt:before {
+  content: "\e95c";
+}
+
+.cmdb-arrow:before {
+  content: "\e95b";
+}
+
+.cmdb-automatic_inventory:before {
+  content: "\e95a";
+}
+
+.cmdb-week_additions:before {
+  content: "\e959";
+}
+
+.cmdb-month_additions:before {
+  content: "\e958";
+}
+
+.cmdb-rule:before {
+  content: "\e955";
+}
+
+.cmdb-executing_machine:before {
+  content: "\e956";
+}
+
+.cmdb-resource:before {
+  content: "\e957";
+}
+
+.cmdb-discovery_resources:before {
+  content: "\e954";
+}
+
+.cmdb-association:before {
+  content: "\e953";
 }
 
 .ops-is_dynamic-disabled:before {
@@ -177,7 +889,7 @@
   content: "\e92a";
 }
 
-.a-Group427319324:before {
+.monitor-add2:before {
   content: "\e929";
 }
 
@@ -281,10 +993,6 @@
   content: "\e862";
 }
 
-.a-veops-import1:before {
-  content: "\e860";
-}
-
 .monitor-ip:before {
   content: "\e807";
 }
@@ -361,11 +1069,11 @@
   content: "\e914";
 }
 
-.itsm-duration:before {
+.itsm-reports_3:before {
   content: "\e913";
 }
 
-.itsm-workload:before {
+.itsm-reports_2:before {
   content: "\e912";
 }
 

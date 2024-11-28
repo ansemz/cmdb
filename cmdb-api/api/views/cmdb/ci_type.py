@@ -48,12 +48,21 @@ class CITypeView(APIView):
         if request.url.endswith("icons"):
             return self.jsonify(CITypeManager().get_icons())
 
-        q = request.args.get("type_name")
+        q = request.values.get("type_name")
+        type_ids = handle_arg_list(request.values.get("type_ids"))
+        type_ids = type_ids or (type_id and [type_id])
+        if type_ids:
+            ci_types = []
+            for _type_id in type_ids:
+                ci_type = CITypeCache.get(_type_id)
+                if ci_type is None:
+                    return abort(404, ErrFormat.ci_type_not_found)
 
-        if type_id is not None:
-            ci_type = CITypeCache.get(type_id).to_dict()
-            ci_type['parent_ids'] = CITypeInheritanceManager.get_parents(type_id)
-            ci_types = [ci_type]
+                ci_type = ci_type.to_dict()
+                ci_type['parent_ids'] = CITypeInheritanceManager.get_parents(_type_id)
+                ci_type['show_name'] = ci_type.get('show_id') and AttributeCache.get(ci_type['show_id']).name
+                ci_type['unique_name'] = ci_type['unique_id'] and AttributeCache.get(ci_type['unique_id']).name
+                ci_types.append(ci_type)
         elif type_name is not None:
             ci_type = CITypeCache.get(type_name).to_dict()
             ci_type['parent_ids'] = CITypeInheritanceManager.get_parents(ci_type['id'])
@@ -357,15 +366,13 @@ class CITypeAttributeGroupView(APIView):
 
 
 class CITypeTemplateView(APIView):
-    url_prefix = ("/ci_types/template/import", "/ci_types/template/export", "/ci_types/<int:type_id>/template/export")
+    url_prefix = ("/ci_types/template/import", "/ci_types/template/export")
 
     @perms_role_required(app_cli.app_name, app_cli.resource_type_name, app_cli.op.Model_Configuration,
                          app_cli.op.download_CIType, app_cli.admin_name)
-    def get(self, type_id=None):  # export
-        if type_id is not None:
-            return self.jsonify(dict(ci_type_template=CITypeTemplateManager.export_template_by_type(type_id)))
-
-        return self.jsonify(dict(ci_type_template=CITypeTemplateManager.export_template()))
+    def get(self):  # export
+        type_ids = list(map(int, handle_arg_list(request.values.get('type_ids')))) or None
+        return self.jsonify(dict(ci_type_template=CITypeTemplateManager.export_template(type_ids=type_ids)))
 
     @perms_role_required(app_cli.app_name, app_cli.resource_type_name, app_cli.op.Model_Configuration,
                          app_cli.op.download_CIType, app_cli.admin_name)

@@ -60,14 +60,20 @@
           v-decorator="['value_type', { rules: [{ required: true }] }]"
           @change="handleChangeValueType"
         >
-          <a-select-option :value="key" :key="key" v-for="(value, key) in valueTypeMap">{{ value }}</a-select-option>
+          <a-select-option :value="key" :key="key" v-for="(value, key) in valueTypeMap">
+            <ops-icon :type="getPropertyIcon({ value_type: key })" />
+            <span class="value-type-text">{{ value }}</span>
+          </a-select-option>
         </a-select>
       </a-form-item></a-col
       >
-      <a-col :span="currentValueType === '6' ? 24 : 12">
+      <a-col
+        v-if="currentValueType !== '11'"
+        :span="currentValueType === '6' ? 24 : 12"
+      >
         <a-form-item
           :label-col="{ span: currentValueType === '6' ? 4 : 8 }"
-          :wrapper-col="{ span: currentValueType === '6' ? 18 : 12 }"
+          :wrapper-col="{ span: currentValueType === '6' ? 18 : 15 }"
           :label="$t('cmdb.ciType.defaultValue')"
         >
           <template>
@@ -77,6 +83,10 @@
               v-decorator="['default_value', { rules: [{ required: false }] }]"
             >
             </a-input>
+            <a-switch
+              v-else-if="currentValueType === '10'"
+              v-decorator="['default_value', { rules: [{ required: false }], valuePropName: 'checked' }]"
+            />
             <a-select
               v-decorator="['default_value', { rules: [{ required: false }] }]"
               mode="tags"
@@ -95,12 +105,7 @@
             </a-input-number>
             <a-input
               style="width: 100%"
-              v-else-if="
-                currentValueType === '2' ||
-                  currentValueType === '5' ||
-                  currentValueType === '7' ||
-                  currentValueType === '8'
-              "
+              v-else-if="['2', '5', '7', '8', '9'].includes(currentValueType)"
               v-decorator="['default_value', { rules: [{ required: false }] }]"
             >
             </a-input>
@@ -157,7 +162,18 @@
         </a-form-item>
       </a-col>
 
-      <a-col :span="currentValueType === '2' ? 6 : 0" v-if="currentValueType !== '6'">
+      <a-col
+        v-if="currentValueType === '11'"
+        :span="12"
+      >
+        <ReferenceModelSelect
+          :form="form"
+          :isLazyRequire="false"
+          :formItemLayout="formItemLayout"
+        />
+      </a-col>
+
+      <!-- <a-col :span="currentValueType === '2' ? 6 : 0" v-if="currentValueType !== '6'">
         <a-form-item
           :hidden="currentValueType === '2' ? false : true"
           :label-col="horizontalFormItemLayout.labelCol"
@@ -171,7 +187,6 @@
                 <a-icon
                   style="position:absolute;top:2px;left:-17px;color:#2f54eb;"
                   type="question-circle"
-                  theme="filled"
                   @click="
                     (e) => {
                       e.stopPropagation()
@@ -189,10 +204,10 @@
             v-decorator="['is_index', { rules: [], valuePropName: 'checked' }]"
           />
         </a-form-item>
-      </a-col>
+      </a-col> -->
       <a-col :span="6" v-if="currentValueType !== '6' && currentValueType !== '7'">
         <a-form-item
-          :label-col="currentValueType === '2' ? { span: 8 } : horizontalFormItemLayout.labelCol"
+          :label-col="horizontalFormItemLayout.labelCol"
           :wrapper-col="horizontalFormItemLayout.wrapperCol"
           :label="$t('cmdb.ciType.unique')"
         >
@@ -206,7 +221,7 @@
       </a-col>
       <a-col :span="6">
         <a-form-item
-          :label-col="['2', '6', '7'].findIndex(i => currentValueType === i) === -1 ? { span: 8 } : horizontalFormItemLayout.labelCol"
+          :label-col="horizontalFormItemLayout.labelCol"
           :wrapper-col="horizontalFormItemLayout.wrapperCol"
           :label="$t('required')"
         >
@@ -219,7 +234,7 @@
       </a-col>
       <a-col :span="6">
         <a-form-item
-          :label-col="currentValueType === '2' ? { span: 12 } : horizontalFormItemLayout.labelCol"
+          :label-col="horizontalFormItemLayout.labelCol"
           :wrapper-col="horizontalFormItemLayout.wrapperCol"
         >
           <template slot="label">
@@ -228,9 +243,8 @@
             >{{ $t('cmdb.ciType.defaultShow') }}
               <a-tooltip :title="$t('cmdb.ciType.defaultShowTips')">
                 <a-icon
-                  style="position:absolute;top:2px;left:-17px;color:#2f54eb;"
-                  type="question-circle"
-                  theme="filled"
+                  style="position:absolute;top:2px;left:-17px;color:#A5A9BC;"
+                  type="info-circle"
                   @click="
                     (e) => {
                       e.stopPropagation()
@@ -250,7 +264,7 @@
       </a-col>
       <a-col :span="6" v-if="currentValueType !== '6' && currentValueType !== '7'">
         <a-form-item
-          :label-col="currentValueType === '2' ? horizontalFormItemLayout.labelCol : { span: 8 }"
+          :label-col="horizontalFormItemLayout.labelCol"
           :wrapper-col="horizontalFormItemLayout.wrapperCol"
           :label="$t('cmdb.ciType.isSortable')"
         >
@@ -263,9 +277,9 @@
         </a-form-item>
       </a-col>
 
-      <a-col :span="6" v-if="currentValueType !== '6' && currentValueType !== '7'">
+      <a-col :span="6" v-if="!['6', '7', '10'].includes(currentValueType)">
         <a-form-item
-          :label-col="currentValueType === '2' ? { span: 8 } : horizontalFormItemLayout.labelCol"
+          :label-col="horizontalFormItemLayout.labelCol"
           :wrapper-col="horizontalFormItemLayout.wrapperCol"
         >
           <template slot="label">
@@ -274,9 +288,8 @@
             >{{ $t('cmdb.ciType.list') }}
               <a-tooltip :title="$t('cmdb.ciType.listTips')">
                 <a-icon
-                  style="position:absolute;top:3px;left:-17px;color:#2f54eb;"
-                  type="question-circle"
-                  theme="filled"
+                  style="position:absolute;top:3px;left:-17px;color:#A5A9BC;"
+                  type="info-circle"
                   @click="
                     (e) => {
                       e.stopPropagation()
@@ -297,7 +310,7 @@
       </a-col>
       <a-col span="6">
         <a-form-item
-          :label-col="['2', '6', '7'].findIndex(i => currentValueType === i) === -1 ? { span: 12 } : horizontalFormItemLayout.labelCol"
+          :label-col="horizontalFormItemLayout.labelCol"
           :wrapper-col="horizontalFormItemLayout.wrapperCol"
         >
           <template slot="label">
@@ -306,12 +319,11 @@
             >{{ $t('cmdb.ciType.isDynamic') }}
               <a-tooltip :title="$t('cmdb.ciType.dynamicTips')">
                 <a-icon
-                  style="position:absolute;top:3px;left:-17px;color:#2f54eb;"
-                  type="question-circle"
-                  theme="filled"
+                  style="position:absolute;top:3px;left:-17px;color:#A5A9BC;"
+                  type="info-circle"
                   @click="
                     (e) => {
-                    e.stopPropagation()
+                      e.stopPropagation()
                       e.preventDefault()
                     }
                   "
@@ -328,27 +340,36 @@
       </a-col>
       <a-divider style="font-size:14px;margin-top:6px;">{{ $t('cmdb.ciType.advancedSettings') }}</a-divider>
       <a-row>
-        <a-col :span="24" v-if="!['6'].includes(currentValueType)">
+        <a-col :span="24">
           <a-form-item :label-col="{ span: 4 }" :wrapper-col="{ span: 12 }" :label="$t('cmdb.ciType.reg')">
-            <RegSelect :isShowErrorMsg="false" v-model="re_check" :limitedFormat="getLimitedFormat()" />
+            <RegSelect
+              :isShowErrorMsg="false"
+              :limitedFormat="getLimitedFormat()"
+              :disabled="['6', '10', '11'].includes(currentValueType)"
+              v-model="re_check"
+            />
           </a-form-item>
         </a-col>
         <a-col :span="24">
           <a-form-item :label-col="{ span: 4 }" :wrapper-col="{ span: 20 }" :label="$t('cmdb.ciType.font')">
-            <FontArea ref="fontArea" />
+            <FontArea ref="fontArea" :fontColorDisabled="['8', '11'].includes(currentValueType)" />
           </a-form-item>
         </a-col>
-        <a-col :span="24" v-if="!['6', '7'].includes(currentValueType)">
+        <a-col :span="24" v-if="!['6', '7', '10', '11'].includes(currentValueType)">
           <a-form-item :label-col="{ span: 4 }" :wrapper-col="{ span: 20 }" :label="$t('cmdb.ciType.choiceValue')">
             <PreValueArea
               v-if="drawerVisible"
               :canDefineScript="canDefineScript"
               ref="preValueArea"
               :disabled="isShowComputedArea"
+              :CITypeId="CITypeId"
+              :enumValueType="enumValueType"
             />
+
+            <a-button type="primary" size="small" ghost @click="resetPreValue" >{{ $t('reset') }}</a-button>
           </a-form-item>
         </a-col>
-        <a-col :span="24" v-if="!['6', '7'].includes(currentValueType)">
+        <a-col :span="24" v-if="!['6', '7', '10', '11'].includes(currentValueType)">
           <a-form-item :label-col="{ span: 4 }" :wrapper-col="{ span: 20 }">
             <template slot="label">
               <span
@@ -356,9 +377,8 @@
               >{{ $t('cmdb.ciType.computedAttribute') }}
                 <a-tooltip :title="$t('cmdb.ciType.computedAttributeTips')">
                   <a-icon
-                    style="position:absolute;top:3px;left:-17px;color:#2f54eb;"
-                    type="question-circle"
-                    theme="filled"
+                    style="position:absolute;top:3px;left:-17px;color:#A5A9BC;"
+                    type="info-circle"
                     @click="
                       (e) => {
                         e.stopPropagation()
@@ -375,6 +395,11 @@
               name="is_computed"
               v-decorator="['is_computed', { rules: [], valuePropName: 'checked' }]"
             />
+            <div v-show="isShowComputedArea" class="computed-attr-tip">
+              <div>1. {{ $t('cmdb.ciType.computedAttrTip1') }}</div>
+              <div>2. {{ $t('cmdb.ciType.computedAttrTip2') }}</div>
+              <div>3. {{ $t('cmdb.ciType.computedAttrTip3') }}</div>
+            </div>
             <ComputedArea
               showCalcComputed
               ref="computedArea"
@@ -410,14 +435,17 @@ import {
   calcComputedAttribute,
 } from '@/modules/cmdb/api/CITypeAttr'
 import { valueTypeMap } from '../../utils/const'
+import { getPropertyType, getPropertyIcon } from '../../utils/helper'
 import ComputedArea from './computedArea.vue'
 import PreValueArea from './preValueArea.vue'
 import FontArea from './fontArea.vue'
 import RegSelect from '@/components/RegexSelect'
+import ReferenceModelSelect from './attributeEdit/referenceModelSelect.vue'
+import { ENUM_VALUE_TYPE } from './preValueAttr/constants.js'
 
 export default {
   name: 'AttributeEditForm',
-  components: { ComputedArea, PreValueArea, vueJsonEditor, FontArea, RegSelect },
+  components: { ComputedArea, PreValueArea, vueJsonEditor, FontArea, RegSelect, ReferenceModelSelect },
   props: {
     CITypeId: {
       type: Number,
@@ -446,6 +474,7 @@ export default {
 
       defaultForDatetime: '',
       re_check: {},
+      enumValueType: ENUM_VALUE_TYPE.INPUT
     }
   },
 
@@ -462,7 +491,7 @@ export default {
       return formLayout === 'horizontal'
         ? {
             labelCol: { span: 8 },
-            wrapperCol: { span: 12 },
+            wrapperCol: { span: 15 },
           }
         : {}
     },
@@ -479,6 +508,7 @@ export default {
   },
   mounted() {},
   methods: {
+    getPropertyIcon,
     async handleCreate() {
       try {
         await canDefineComputed()
@@ -511,9 +541,7 @@ export default {
         }
       }
       if (property === 'is_list') {
-        this.form.setFieldsValue({
-          default_value: checked ? [] : '',
-        })
+        this.handleSwitchIsList(checked)
       }
       if (checked && property === 'is_sortable') {
         this.$message.warning(this.$t('cmdb.ciType.addAttributeTips1'))
@@ -531,6 +559,26 @@ export default {
       }
     },
 
+    handleSwitchIsList(checked) {
+      let defaultValue = checked ? [] : ''
+
+      switch (this.currentValueType) {
+        case '2':
+        case '9':
+          defaultValue = ''
+          break
+        case '10':
+          defaultValue = checked ? '' : false
+          break
+        default:
+          break
+      }
+
+      this.form.setFieldsValue({
+        default_value: defaultValue,
+      })
+    },
+
     async handleEdit(record, attributes) {
       try {
         await canDefineComputed()
@@ -539,12 +587,7 @@ export default {
         this.canDefineComputed = false
       }
       const _record = _.cloneDeep(record)
-      if (_record.is_password) {
-        _record.value_type = '7'
-      }
-      if (_record.is_link) {
-        _record.value_type = '8'
-      }
+      _record.value_type = getPropertyType(_record)
       this.drawerTitle = this.$t('cmdb.ciType.editAttribute')
       this.drawerVisible = true
       this.record = _record
@@ -568,8 +611,13 @@ export default {
             is_dynamic: _record.is_dynamic,
           })
         }
+        if (_record.value_type === '11') {
+          this.form.setFieldsValue({
+            reference_type_id: _record.reference_type_id
+          })
+        }
         console.log(_record)
-        if (!['6'].includes(_record.value_type) && _record.re_check) {
+        if (!['6', '10', '11'].includes(_record.value_type) && _record.re_check) {
           this.re_check = {
             value: _record.re_check,
           }
@@ -578,7 +626,11 @@ export default {
         }
         if (_record.default) {
           this.$nextTick(() => {
-            if (_record.value_type === '0') {
+            if (_record.value_type === '10') {
+              this.form.setFieldsValue({
+                default_value: Boolean(_record.default.default),
+              })
+            } else if (_record.value_type === '0') {
               if (_record.is_list) {
                 this.$nextTick(() => {
                   this.form.setFieldsValue({
@@ -634,7 +686,23 @@ export default {
           })
         }
         const _find = attributes.find((item) => item.id === _record.id)
-        if (!['6', '7'].includes(_record.value_type)) {
+        if (!['6', '7', '10', '11'].includes(_record.value_type)) {
+          switch (_record.value_type) {
+            case '0':
+            case '1':
+              this.enumValueType = ENUM_VALUE_TYPE.NUMBER
+              break
+            case '3':
+              this.enumValueType = ENUM_VALUE_TYPE.DATE_TIME
+              break
+            case '4':
+              this.enumValueType = ENUM_VALUE_TYPE.DATE
+              break
+            default:
+              this.enumValueType = ENUM_VALUE_TYPE.INPUT
+              break
+          }
+
           this.$refs.preValueArea.setData({
             choice_value: (_find || {}).choice_value || [],
             choice_web_hook: _record.choice_web_hook,
@@ -664,10 +732,10 @@ export default {
             })
           }
 
-          delete values['default_show']
-          delete values['is_required']
           const { default_value } = values
-          if (values.value_type === '0' && default_value) {
+          if (values.value_type === '10') {
+            values.default = { default: values.is_list ? default_value : Boolean(default_value) }
+          } else if (values.value_type === '0' && default_value) {
             if (values.is_list) {
               values.default = { default: default_value || null }
             } else {
@@ -695,29 +763,56 @@ export default {
             values.default = { default: null }
           }
 
-          delete values.default_value
           if (values.is_computed) {
             const computedAreaData = this.$refs.computedArea.getData()
             values = { ...values, ...computedAreaData }
           } else {
             // If it is a non-computed attribute, check to see if there is a predefined value
-            if (!['6', '7'].includes(values.value_type)) {
+            if (!['6', '7', '10', '11'].includes(values.value_type)) {
               const preValueAreaData = this.$refs.preValueArea.getData()
+              // 预定义值校验错误
+              if (preValueAreaData?.isError) {
+                return
+              }
               values = { ...values, ...preValueAreaData }
             }
           }
+
+          delete values['default_show']
+          delete values['is_required']
+          delete values.default_value
+
           const fontOptions = this.$refs.fontArea.getData()
-          if (values.value_type === '7') {
-            values.value_type = '2'
-            values.is_password = true
-          }
-          if (values.value_type === '8') {
-            values.value_type = '2'
-            values.is_link = true
-          }
-          if (values.value_type !== '6') {
+
+          if (!['6', '10', '11'].includes(values.value_type)) {
             values.re_check = this.re_check?.value ?? null
           }
+
+          // 重置数据类型
+          switch (values.value_type) {
+            case '7':
+              values.value_type = '2'
+              values.is_password = true
+              break
+            case '8':
+              values.value_type = '2'
+              values.is_link = true
+              break
+            case '9':
+              values.value_type = '2'
+              break
+            case '10':
+              values.value_type = '7'
+              values.is_bool = true
+              break
+            case '11':
+              values.value_type = '0'
+              values.is_reference = true
+              break
+            default:
+              break
+          }
+
           if (values.id) {
             await this.updateAttribute(values.id, { ...values, option: { fontOptions } }, isCalcComputed)
           } else {
@@ -759,10 +854,19 @@ export default {
     },
     changeDefaultForDatetime(value) {
       this.defaultForDatetime = value
-      if (value === '$custom_time') {
-        this.form.setFieldsValue({
-          default_value: undefined,
-        })
+      switch (value) {
+        case '$custom_time':
+          this.form.setFieldsValue({
+            default_value: undefined,
+          })
+          break
+        case '$updated_at':
+          this.form.setFieldsValue({
+            is_dynamic: true,
+          })
+          break
+        default:
+          break
       }
     },
     onClick({ key }) {
@@ -790,12 +894,27 @@ export default {
       }
       return []
     },
+
+    resetPreValue() {
+      if (this.$refs.preValueArea) {
+        this.$refs.preValueArea.resetData()
+      }
+    }
   },
   watch: {},
 }
 </script>
 
-<style lang="less" scoped></style>
+<style lang="less" scoped>
+.computed-attr-tip {
+  font-size: 12px;
+  line-height: 22px;
+  color: #a5a9bc;
+}
+.value-type-text {
+  margin-left: 4px;
+}
+</style>
 <style lang="less">
 .attribute-edit-form {
   .jsoneditor-outer {

@@ -10,6 +10,7 @@ export default {
         resourceType: 'Resource Types',
         trigger: 'Triggers',
     },
+    settings: 'Common Settings',
     screen: 'Big Screen',
     dashboard: 'Dashboard',
     admin: 'Admin',
@@ -107,6 +108,7 @@ export default {
     visual: 'Visual',
     default: 'default',
     tip: 'Tip',
+    cmdbSearch: 'Search',
     pagination: {
         total: '{range0}-{range1} of {total} items'
     },
@@ -165,6 +167,15 @@ export default {
         link: 'link',
         monetaryAmount: 'monetary amount',
         custom: 'custom',
+    },
+    userPanel: {
+      myProfile: 'My Profile',
+      accountPassword: 'Password',
+      notice: 'Notice',
+      switchLanguage: 'Switch Language',
+      bindAccount: 'Bind Account',
+      switchAccount: 'Switch Account',
+      logout: 'Logout'
     },
     cmdb: cmdb_en,
     cs: cs_en,

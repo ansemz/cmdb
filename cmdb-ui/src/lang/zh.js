@@ -10,6 +10,7 @@ export default {
         resourceType: '资源类型',
         trigger: '触发器',
     },
+    settings: '通用设置',
     screen: '大屏',
     dashboard: '仪表盘',
     admin: '管理员',
@@ -107,6 +108,7 @@ export default {
     visual: '虚拟',
     default: '默认',
     tip: '提示',
+    cmdbSearch: '搜索一下',
     pagination: {
         total: '当前展示 {range0}-{range1} 条数据， 共 {total} 条'
     },
@@ -165,6 +167,15 @@ export default {
         link: '链接',
         monetaryAmount: '货币金额',
         custom: '自定义',
+    },
+    userPanel: {
+      myProfile: '个人中心',
+      accountPassword: '账号密码',
+      notice: '通知中心',
+      switchLanguage: '切换语言',
+      bindAccount: '绑定账号',
+      switchAccount: '切换账号',
+      logout: '退出账号'
     },
     cmdb: cmdb_zh,
     cs: cs_zh,

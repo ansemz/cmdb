@@ -1,68 +1,48 @@
 <template>
-  <div>
-    <a-select v-if="ruleType === 'http'" :style="{ marginBottom: '10px' }" v-model="currentCate">
-      <a-select-option v-for="cate in categories" :key="cate" :value="cate">{{ cate }}</a-select-option>
-    </a-select>
-    <vxe-table
-      size="mini"
-      stripe
-      class="ops-stripe-table"
-      show-overflow
-      keep-source
-      ref="xTable"
-      resizable
-      :data="tableData"
-      :edit-config="isEdit ? { trigger: 'click', mode: 'cell' } : {}"
-    >
-      <template v-if="isEdit">
-        <vxe-colgroup :title="$t('cmdb.ciType.autoDiscovery')">
-          <vxe-column field="name" :title="$t('name')" width="100"> </vxe-column>
-          <vxe-column field="type" :title="$t('type')" width="80"> </vxe-column>
-          <vxe-column field="example" :title="$t('cmdb.components.example')">
-            <template #default="{row}">
-              <span v-if="row.type === 'json'">{{ JSON.stringify(row.example) }}</span>
-              <span v-else>{{ row.example }}</span>
-            </template>
-          </vxe-column>
-          <vxe-column field="desc" :title="$t('desc')"> </vxe-column>
-        </vxe-colgroup>
-        <vxe-colgroup :title="$t('cmdb.ciType.attributes')">
-          <vxe-column field="attr" :title="$t('name')" :edit-render="{}">
-            <template #default="{row}">
-              {{ row.attr }}
-            </template>
-            <template #edit="{ row }">
-              <vxe-select
-                filterable
-                clearable
-                v-model="row.attr"
-                type="text"
-                :options="ciTypeAttributes"
-                transfer
-              ></vxe-select>
-            </template>
-          </vxe-column>
-        </vxe-colgroup>
-      </template>
-      <template v-else>
-        <vxe-column field="name" :title="$t('name')" width="100"> </vxe-column>
-        <vxe-column field="type" :title="$t('type')" width="80"> </vxe-column>
-        <vxe-column field="example" :title="$t('cmdb.components.example')">
-          <template #default="{row}">
-            <span v-if="row.type === 'object'">{{ JSON.stringify(row.example) }}</span>
-            <span v-else>{{ row.example }}</span>
-          </template>
-        </vxe-column>
-        <vxe-column field="desc" :title="$t('desc')"> </vxe-column>
-      </template>
-    </vxe-table>
+  <div class="http-snmp-ad">
+    <HttpADCategory
+      v-if="!isEdit && isCloud"
+      :categories="categories"
+      :currentCate="currentCate"
+      :tableData="tableData"
+      :ruleType="ruleType"
+      @clickCategory="setCurrentCate"
+    />
+    <template v-else>
+      <a-select v-if="isCloud" :style="{ marginBottom: '10px', minWidth: '200px' }" v-model="currentCate">
+        <a-select-option v-for="cate in categoriesSelect" :key="cate" :value="cate">{{ cate }}</a-select-option>
+      </a-select>
+      <AttrMapTable
+        v-if="isEdit"
+        ref="attrMapTable"
+        :ruleType="ruleType"
+        :tableData="tableData"
+        :ciTypeAttributes="ciTypeAttributes"
+        :uniqueKey="uniqueKey"
+      />
+      <ADPreviewTable
+        v-else
+        :tableData="tableData"
+      />
+    </template>
   </div>
 </template>
 
 <script>
-import { getHttpCategories, getHttpAttributes, getSnmpAttributes } from '../../api/discovery'
+import _ from 'lodash'
+import { getHttpCategories, getHttpAttributes, getSnmpAttributes, getHttpAttrMapping } from '../../api/discovery'
+import { DISCOVERY_CATEGORY_TYPE } from '@/modules/cmdb/views/discovery/constants.js'
+import AttrMapTable from '@/modules/cmdb/components/attrMapTable/index.vue'
+import ADPreviewTable from './adPreviewTable.vue'
+import HttpADCategory from './httpADCategory.vue'
+
 export default {
   name: 'HttpSnmpAD',
+  components: {
+    AttrMapTable,
+    ADPreviewTable,
+    HttpADCategory
+  },
   props: {
     ruleName: {
       type: String,
@@ -88,12 +68,22 @@ export default {
       type: Number,
       default: 0,
     },
+    uniqueKey: {
+      type: String,
+      default: '',
+    },
+    currentAdt: {
+      type: Object,
+      default: () => {},
+    }
   },
   data() {
     return {
       categories: [],
+      categoriesSelect: [],
       currentCate: '',
       tableData: [],
+      httpAttrMap: {}
     }
   },
   computed: {
@@ -107,21 +97,20 @@ export default {
         腾讯云: { name: 'tencentcloud' },
         华为云: { name: 'huaweicloud' },
         AWS: { name: 'aws' },
+        VCenter: { name: 'vcenter' },
+        KVM: { name: 'kvm' },
       }
     },
+    isCloud() {
+      return [DISCOVERY_CATEGORY_TYPE.HTTP, DISCOVERY_CATEGORY_TYPE.PRIVATE_CLOUD].includes(this.ruleType)
+    }
   },
   watch: {
     currentCate: {
       immediate: true,
       handler(newVal) {
         if (newVal) {
-          getHttpAttributes(this.httpMap[`${this.ruleName}`].name, { category: newVal }).then((res) => {
-            if (this.isEdit) {
-              this.formatTableData(res)
-            } else {
-              this.tableData = res
-            }
-          })
+          this.getHttpAttr(newVal)
         }
       },
     },
@@ -131,8 +120,8 @@ export default {
         this.currentCate = ''
         this.$nextTick(() => {
           const { ruleType, ruleName } = newVal
-          if (ruleType === 'snmp' && ruleName) {
-            getSnmpAttributes(ruleName).then((res) => {
+          if ([DISCOVERY_CATEGORY_TYPE.SNMP, DISCOVERY_CATEGORY_TYPE.COMPONENT].includes(ruleType) && ruleName) {
+            getSnmpAttributes(ruleType, ruleName).then((res) => {
               if (this.isEdit) {
                 this.formatTableData(res)
               } else {
@@ -140,11 +129,19 @@ export default {
               }
             })
           }
-          if (ruleType === 'http' && ruleName) {
-            getHttpCategories(this.httpMap[`${this.ruleName}`].name).then((res) => {
+
+          if (this.isCloud && ruleName) {
+            getHttpCategories(this.ruleName).then((res) => {
               this.categories = res
-              if (res && res.length) {
-                this.currentCate = res[0]
+              const categoriesSelect = []
+              res.forEach((category) => {
+                if (category?.items?.length) {
+                  categoriesSelect.push(...category.items)
+                }
+              })
+              this.categoriesSelect = categoriesSelect
+              if (this.isEdit && categoriesSelect?.length) {
+                this.currentCate = this?.currentAdt?.extra_option?.category || categoriesSelect[0]
               }
             })
           }
@@ -162,31 +159,61 @@ export default {
     },
     formatTableData(list) {
       const _findADT = this.adCITypeList.find((item) => Number(item.adr_id) === Number(this.currentTab))
-      this.tableData = (list || []).map((item) => {
-        if (_findADT.attributes) {
-          return {
-            ...item,
-            attr: _findADT.attributes[`${item.name}`],
-          }
-        } else {
+      this.tableData = (list || []).map((val) => {
+        const item = _.cloneDeep(val)
+
+        if (_findADT?.attributes?.[item.name]) {
+          item.attr = _findADT.attributes[item.name]
+        }
+
+        const attrMapName = this.httpAttrMap?.[item?.name]
+
+        if (
+          this.isEdit &&
+          !item.attr &&
+          attrMapName &&
+          this.ciTypeAttributes.some((ele) => ele.name === attrMapName)
+        ) {
+          item.attr = attrMapName
+        }
+
+        if (!item.attr) {
           const _find = this.ciTypeAttributes.find((ele) => ele.name === item.name)
           if (_find) {
-            return {
-              ...item,
-              attr: _find.name,
-            }
+            item.attr = _find.name
           }
-          return item
         }
+
+        return item
       })
     },
     getTableData() {
-      const $table = this.$refs.xTable
+      const $table = this.$refs.attrMapTable
       const { fullData } = $table.getTableData()
       return fullData || []
     },
+
+    async getHttpAttr(val) {
+      await this.getHttpAttrMapping(this.ruleName, val)
+      getHttpAttributes(this.ruleName, { resource: val }).then((res) => {
+        if (this.isEdit) {
+          this.formatTableData(res)
+        } else {
+          this.tableData = res
+        }
+      })
+    },
+
+    async getHttpAttrMapping(name, resource) {
+      const res = await getHttpAttrMapping(name, resource)
+      this.httpAttrMap = res || {}
+    }
   },
 }
 </script>
 
-<style></style>
+<style>
+.http-snmp-ad {
+  height: 100%;
+}
+</style>

@@ -73,7 +73,8 @@
 ## 安装
 
 ### Docker 一键快速构建
-> 方法一
+
+[//]: # (> 方法一)
 - 第一步: 先安装 Docker 环境, 以及Docker Compose (v2)
 - 第二步: 拷贝项目
 ```shell 
@@ -83,13 +84,20 @@ git clone https://github.com/veops/cmdb.git
 ```
 docker compose up -d
 ```
-> 方法二, 该方法适用于linux系统
-- 第一步： 先安装 Docker 环境, 以及Docker Compose (v2)
-- 第二步： 直接使用项目根目录下的install.sh 文件进行 `安装`、`启动`、`暂停`、`查状态`、`删除`、`卸载`
-```shell
-curl -so install.sh https://raw.githubusercontent.com/veops/cmdb/deploy_on_kylin_docker/install.sh
-sh install.sh install
-```
+
+[//]: # (> 方法二, 该方法适用于linux系统)
+
+[//]: # (- 第一步： 先安装 Docker 环境, 以及Docker Compose &#40;v2&#41;)
+
+[//]: # (- 第二步： 直接使用项目根目录下的install.sh 文件进行 `安装`、`启动`、`暂停`、`查状态`、`删除`、`卸载`)
+
+[//]: # (```shell)
+
+[//]: # (curl -so install.sh https://raw.githubusercontent.com/veops/cmdb/deploy_on_kylin_docker/install.sh)
+
+[//]: # (sh install.sh install)
+
+[//]: # (```)
 
 ### [本地开发环境搭建](docs/local.md)
 
@@ -105,4 +113,7 @@ sh install.sh install
 
 _**欢迎关注公众号(维易科技OneOps)，关注后可加入微信群，进行产品和技术交流。**_
 
-![公众号: 维易科技OneOps](docs/images/wechat.png)
+
+<p align="center">
+  <img src="docs/images/wechat.png" alt="公众号: 维易科技OneOps" />
+</p>

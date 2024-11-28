@@ -20,7 +20,7 @@
               :key="attr.name"
               v-for="attr in group.attributes"
             >
-              <ci-detail-attr-content :ci="ci" :attr="attr" @refresh="refresh" @updateCIByself="updateCIByself" />
+              <ci-detail-attr-content :ci="ci" :attr="attr" @refresh="refresh" @updateCIByself="updateCIByself" @refreshReferenceAttr="handleReferenceAttr" />
             </el-descriptions-item>
           </el-descriptions>
         </div>
@@ -28,7 +28,7 @@
       <a-tab-pane key="tab_2">
         <span slot="tab"><a-icon type="branches" />{{ $t('cmdb.relation') }}</span>
         <div :style="{ height: '100%', padding: '24px', overflow: 'auto' }">
-          <ci-detail-relation ref="ciDetailRelation" :ciId="ciId" :typeId="typeId" :ci="ci" />
+          <ci-detail-relation ref="ciDetailRelation" :ciId="ciId" :typeId="typeId" :ci="ci" :initQueryLoading="initQueryLoading" />
         </div>
       </a-tab-pane>
       <a-tab-pane key="tab_3">
@@ -37,6 +37,9 @@
           <a-space :style="{ 'margin-bottom': '10px', display: 'flex' }">
             <a-button type="primary" class="ops-button-ghost" ghost @click="handleRollbackCI()">
               <ops-icon type="shishizhuangtai" />{{ $t('cmdb.ci.rollback') }}
+            </a-button>
+            <a-button type="primary" class="ops-button-ghost" ghost @click="handleExport">
+              <ops-icon type="veops-export" />{{ $t('export') }}
             </a-button>
           </a-space>
           <ci-rollback-form ref="ciRollbackForm" :ciIds="[ciId]" @getCIHistory="getCIHistory" />
@@ -88,13 +91,13 @@
               :filters="[]"
               :filter-method="filterAttrMethod"
             ></vxe-table-column>
-            <vxe-table-column field="old" :title="$t('cmdb.history.old')">
+            <vxe-table-column :cell-type="'string'" field="old" :title="$t('cmdb.history.old')">
               <template #default="{ row }">
                 <span v-if="row.value_type === '6'">{{ JSON.parse(row.old) }}</span>
                 <span v-else>{{ row.old }}</span>
               </template>
             </vxe-table-column>
-            <vxe-table-column field="new" :title="$t('cmdb.history.new')">
+            <vxe-table-column :cell-type="'string'" field="new" :title="$t('cmdb.history.new')">
               <template #default="{ row }">
                 <span v-if="row.value_type === '6'">{{ JSON.parse(row.new) }}</span>
                 <span v-else>{{ row.new }}</span>
@@ -134,7 +137,7 @@ import _ from 'lodash'
 import { Descriptions, DescriptionsItem } from 'element-ui'
 import { getCITypeGroupById, getCITypes } from '@/modules/cmdb/api/CIType'
 import { getCIHistory, judgeItsmInstalled } from '@/modules/cmdb/api/history'
-import { getCIById } from '@/modules/cmdb/api/ci'
+import { getCIById, searchCI } from '@/modules/cmdb/api/ci'
 import CiDetailAttrContent from './ciDetailAttrContent.vue'
 import CiDetailRelation from './ciDetailRelation.vue'
 import TriggerTable from '../../operation_history/modules/triggerTable.vue'
@@ -178,6 +181,7 @@ export default {
       hasPermission: true,
       itsmInstalled: true,
       tableHeight: this.attributeHistoryTableHeight || (this.$store.state.windowHeight - 120),
+      initQueryLoading: true,
     }
   },
   computed: {
@@ -215,6 +219,7 @@ export default {
   },
   methods: {
     async create(ciId, activeTabKey = 'tab_1', ciDetailRelationKey = '1') {
+      this.initQueryLoading = true
       this.activeTabKey = activeTabKey
       if (activeTabKey === 'tab_2') {
         this.$nextTick(() => {
@@ -227,18 +232,90 @@ export default {
       if (this.hasPermission) {
         this.getAttributes()
         this.getCIHistory()
-        getCITypes().then((res) => {
-          this.ci_types = res.ci_types
-        })
+        const ciTypeRes = await getCITypes()
+        this.ci_types = ciTypeRes.ci_types
+        if (this.activeTabKey === 'tab_2') {
+          this.$refs.ciDetailRelation.init(true)
+        }
       }
+      this.initQueryLoading = false
     },
     getAttributes() {
       getCITypeGroupById(this.typeId, { need_other: 1 })
         .then((res) => {
           this.attributeGroups = res
+
+          this.handleReferenceAttr()
         })
         .catch((e) => {})
     },
+
+    async handleReferenceAttr() {
+      const map = {}
+      this.attributeGroups.forEach((group) => {
+        group.attributes.forEach((attr) => {
+          if (attr?.is_reference && attr?.reference_type_id && this.ci[attr.name]) {
+            const ids = Array.isArray(this.ci[attr.name]) ? this.ci[attr.name] : this.ci[attr.name] ? [this.ci[attr.name]] : []
+            if (ids.length) {
+              if (!map?.[attr.reference_type_id]) {
+                map[attr.reference_type_id] = {}
+              }
+              ids.forEach((id) => {
+                map[attr.reference_type_id][id] = {}
+              })
+            }
+          }
+        })
+      })
+
+      if (!Object.keys(map).length) {
+        return
+      }
+
+      const ciTypesRes = await getCITypes({
+        type_ids: Object.keys(map).join(',')
+      })
+      const showAttrNameMap = {}
+      ciTypesRes.ci_types.forEach((ciType) => {
+        showAttrNameMap[ciType.id] = ciType?.show_name || ciType?.unique_name || ''
+      })
+
+      const allRes = await Promise.all(
+        Object.keys(map).map((key) => {
+          return searchCI({
+            q: `_type:${key},_id:(${Object.keys(map[key]).join(';')})`,
+            count: 9999
+          })
+        })
+      )
+
+      const ciNameMap = {}
+      allRes.forEach((res) => {
+        res.result.forEach((item) => {
+          ciNameMap[item._id] = item
+        })
+      })
+
+      const newAttrGroups = _.cloneDeep(this.attributeGroups)
+
+      newAttrGroups.forEach((group) => {
+        group.attributes.forEach((attr) => {
+          if (attr?.is_reference && attr?.reference_type_id) {
+            attr.showAttrName = showAttrNameMap?.[attr?.reference_type_id] || ''
+
+            const referenceShowAttrNameMap = {}
+            const referenceCIIds = this.ci[attr.name];
+            (Array.isArray(referenceCIIds) ? referenceCIIds : referenceCIIds ? [referenceCIIds] : []).forEach((id) => {
+              referenceShowAttrNameMap[id] = ciNameMap?.[id]?.[attr.showAttrName] ?? id
+            })
+            attr.referenceShowAttrNameMap = referenceShowAttrNameMap
+          }
+        })
+      })
+
+      this.$set(this, 'attributeGroups', newAttrGroups)
+    },
+
     async getCI() {
       await getCIById(this.ciId)
         .then((res) => {
@@ -402,6 +479,17 @@ export default {
         this.$refs.ciRollbackForm.onOpen()
       })
     },
+    async handleExport() {
+      this.$refs.xTable.exportData({
+        filename: this.$t('cmdb.ci.history'),
+        sheetName: 'Sheet1',
+        type: 'xlsx',
+        types: ['xlsx', 'csv', 'html', 'xml', 'txt'],
+        data: this.ciHistory,
+        isMerge: true,
+        isColgroup: true,
+      })
+    }
   },
 }
 </script>

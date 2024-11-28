@@ -1,38 +1,49 @@
 <template>
-  <a-tabs v-model="activeKey" size="small" :tabBarStyle="{ borderBottom: 'none' }">
+  <a-tabs v-model="activeKey" size="small" :tabBarStyle="{ borderBottom: 'none' }" @change="handleTabsChange">
     <a-tab-pane key="expr" :disabled="!canDefineComputed">
       <span style="font-size:12px;" slot="tab">{{ $t('cmdb.ciType.expr') }}</span>
       <a-textarea v-model="compute_expr" :placeholder="`{{a}}+{{b}}`" :rows="2" :disabled="!canDefineComputed" />
     </a-tab-pane>
     <a-tab-pane key="script" :disabled="!canDefineComputed">
       <span style="font-size:12px;" slot="tab">{{ $t('cmdb.ciType.code') }}</span>
-      <codemirror
-        style="z-index: 9999"
-        :options="cmOptions"
-        v-model="compute_script"
-        @input="onCodeChange"
-      ></codemirror>
+      <CustomCodeMirror
+        codeMirrorId="cmdb-computed-attr"
+        ref="codemirror"
+        @changeCodeContent="onCodeChange"
+      ></CustomCodeMirror>
     </a-tab-pane>
-    <template slot="tabBarExtraContent" v-if="showCalcComputed">
-      <a-button type="primary" size="small" @click="handleCalcComputed">
-        {{ $t('cmdb.ciType.apply') }}
+    <template slot="tabBarExtraContent">
+      <a-button size="small" @click="showAllPropDrawer">
+        {{ $t('cmdb.ciType.viewAllAttr') }}
       </a-button>
-      <a-tooltip :title="$t('cmdb.ciType.computeForAllCITips')">
-        <a-icon type="question-circle" style="margin-left:5px" />
-      </a-tooltip>
+      <AllAttrDrawer ref="allAttrDrawer" />
+
+      <template v-if="showCalcComputed">
+        <a-button style="margin: 0px 5px;" type="primary" size="small" @click="handleCalcComputed">
+          {{ $t('cmdb.ciType.apply') }}
+        </a-button>
+        <a-tooltip :title="$t('cmdb.ciType.computeForAllCITips')">
+          <a-icon type="question-circle" />
+        </a-tooltip>
+      </template>
     </template>
   </a-tabs>
 </template>
 
 <script>
-import { codemirror } from 'vue-codemirror'
+import AllAttrDrawer from './allAttrDrawer.vue'
+
+import CustomCodeMirror from '@/components/CustomCodeMirror'
 import 'codemirror/lib/codemirror.css'
 import 'codemirror/theme/monokai.css'
 
 require('codemirror/mode/python/python.js')
 export default {
   name: 'ComputedArea',
-  components: { codemirror },
+  components: {
+    CustomCodeMirror,
+    AllAttrDrawer
+  },
   props: {
     canDefineComputed: {
       type: Boolean,
@@ -48,33 +59,6 @@ export default {
       activeKey: 'expr', // expr script
       compute_expr: '',
       compute_script: 'def computed(): \n    return',
-      cmOptions: {
-        lineNumbers: true,
-        mode: 'python',
-        height: '200px',
-        theme: 'monokai',
-        tabSize: 4,
-        indentUnit: 4,
-        lineWrapping: false,
-        readOnly: !this.canDefineComputed,
-        extraKeys: {
-          Tab: (cm) => {
-            if (cm.somethingSelected()) {
-              cm.indentSelection('add')
-            } else {
-              cm.replaceSelection(Array(cm.getOption('indentUnit') + 1).join(' '), 'end', '+input')
-            }
-          },
-          'Shift-Tab': (cm) => {
-            if (cm.somethingSelected()) {
-              cm.indentSelection('subtract')
-            } else {
-              const cursor = cm.getCursor()
-              cm.setCursor({ line: cursor.line, ch: cursor.ch - 4 })
-            }
-          },
-        },
-      },
     }
   },
   methods: {
@@ -92,6 +76,9 @@ export default {
       this.compute_script = compute_script || 'def computed(): \n    return'
       if (compute_script) {
         this.activeKey = 'script'
+        this.$nextTick(() => {
+          this.$refs.codemirror.initCodeMirror(this.compute_script)
+        })
       } else {
         this.activeKey = 'expr'
       }
@@ -108,6 +95,18 @@ export default {
     },
     onCodeChange(v) {
       this.compute_script = v.replace('\t', '    ')
+    },
+    showAllPropDrawer() {
+      this.$refs.allAttrDrawer.open()
+    },
+
+    handleTabsChange(activeKey) {
+      console.log('handleTabsChange', activeKey)
+      if (activeKey === 'script') {
+        this.$nextTick(() => {
+          this.$refs.codemirror.initCodeMirror(this.compute_script)
+        })
+      }
     }
   },
 }

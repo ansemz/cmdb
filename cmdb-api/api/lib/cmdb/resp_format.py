@@ -35,7 +35,7 @@ class ErrFormat(CommonErrFormat):
         "Only creators and administrators are allowed to delete attributes!")  # 目前只允许 属性创建人、管理员 删除属性!
     # 属性字段名不能是内置字段: id, _id, ci_id, type, _type, ci_type
     attribute_name_cannot_be_builtin = _l(
-        "Attribute field names cannot be built-in fields: id, _id, ci_id, type, _type, ci_type")
+        "Attribute field names cannot be built-in fields: id, _id, ci_id, type, _type, ci_type, ticket_id")
     attribute_choice_other_invalid = _l(
         "Predefined value: Other model request parameters are illegal!")  # 预定义值: 其他模型请求参数不合法!
 
@@ -44,6 +44,8 @@ class ErrFormat(CommonErrFormat):
     unique_value_not_found = _l("The model's primary key {} does not exist!")  # 模型的主键 {} 不存在!
     unique_key_required = _l("Primary key {} is missing")  # 主键字段 {} 缺失
     ci_is_already_existed = _l("CI already exists!")  # CI 已经存在!
+    ci_reference_not_found = _l("{}: CI reference {} does not exist!")  # {}: CI引用 {} 不存在!
+    ci_reference_invalid = _l("{}: CI reference {} is illegal!")  # {}, CI引用 {} 不合法!
     relation_constraint = _l("Relationship constraint: {}, verification failed")  # 关系约束: {}, 校验失败
     # 多对多关系 限制: 模型 {} <-> {} 已经存在多对多关系!
     m2m_relation_constraint = _l(
@@ -62,6 +64,9 @@ class ErrFormat(CommonErrFormat):
         "The model cannot be deleted because the CI already exists")  # 因为CI已经存在，不能删除模型
     ci_exists_and_cannot_delete_inheritance = _l(
         "The inheritance cannot be deleted because the CI already exists")  # 因为CI已经存在，不能删除继承关系
+    ci_type_inheritance_cannot_delete = _l("The model is inherited and cannot be deleted")  # 该模型被继承, 不能删除
+    ci_type_referenced_cannot_delete = _l(
+        "The model is referenced by attribute {} and cannot be deleted")  # 该模型被属性 {} 引用, 不能删除
 
     # 因为关系视图 {} 引用了该模型，不能删除模型
     ci_relation_view_exists_and_cannot_delete_type = _l(
@@ -149,3 +154,23 @@ class ErrFormat(CommonErrFormat):
     topology_group_exists = _l("Topology group {} already exists")  # 拓扑视图分组 {} 已经存在
     # 因为该分组下定义了拓扑视图，不能删除
     topo_view_exists_cannot_delete_group = _l("The group cannot be deleted because the topology view already exists")
+
+    relation_path_search_src_target_required = _l("Both the source model and the target model must be selected")
+
+    builtin_type_cannot_update_name = _l("The names of built-in models cannot be changed")
+    # # IPAM
+    ipam_subnet_model_not_found = _l("The subnet model {} does not exist")
+    ipam_address_model_not_found = _l("The IP Address model {} does not exist")
+    ipam_cidr_invalid_notation = _l("CIDR {} is an invalid notation")
+    ipam_cidr_invalid_subnet = _l("Invalid CIDR: {}, available subnets: {}")
+    ipam_subnet_prefix_length_invalid = _l("Invalid subnet prefix length: {}")
+    ipam_parent_subnet_node_cidr_cannot_empty = _l("parent node cidr must be required")
+    ipam_subnet_overlapped = _l("{} and {} overlap")
+    ipam_subnet_cannot_delete = _l("Cannot delete because child nodes exist")
+    ipam_subnet_not_found = _l("Subnet is not found")
+    ipam_scope_cannot_delete = _l("Cannot delete because child nodes exist")
+
+    # # DCIM
+    dcim_builtin_model_not_found = _l("The dcim model {} does not exist")
+    dcim_rack_u_slot_invalid = _l("Irregularities in Rack Units")
+    dcim_rack_u_count_invalid = _l("The device's position is greater than the rack unit height")

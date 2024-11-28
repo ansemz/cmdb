@@ -1,6 +1,8 @@
 # -*- coding:utf-8 -*- 
 
 
+from flask_babel import lazy_gettext as _l
+
 from api.lib.utils import BaseEnum
 
 
@@ -14,6 +16,8 @@ class ValueTypeEnum(BaseEnum):
     JSON = "6"
     PASSWORD = TEXT
     LINK = TEXT
+    BOOL = "7"
+    REFERENCE = INT
 
 
 class ConstraintEnum(BaseEnum):
@@ -41,23 +45,23 @@ class OperateType(BaseEnum):
 
 
 class CITypeOperateType(BaseEnum):
-    ADD = "0"  # 新增模型
-    UPDATE = "1"  # 修改模型
-    DELETE = "2"  # 删除模型
-    ADD_ATTRIBUTE = "3"  # 新增属性
-    UPDATE_ATTRIBUTE = "4"  # 修改属性
-    DELETE_ATTRIBUTE = "5"  # 删除属性
-    ADD_TRIGGER = "6"  # 新增触发器
-    UPDATE_TRIGGER = "7"  # 修改触发器
-    DELETE_TRIGGER = "8"  # 删除触发器
-    ADD_UNIQUE_CONSTRAINT = "9"  # 新增联合唯一
-    UPDATE_UNIQUE_CONSTRAINT = "10"  # 修改联合唯一
-    DELETE_UNIQUE_CONSTRAINT = "11"  # 删除联合唯一
-    ADD_RELATION = "12"  # 新增关系
-    DELETE_RELATION = "13"  # 删除关系
-    ADD_RECONCILIATION = "14"  # 删除关系
-    UPDATE_RECONCILIATION = "15"  # 删除关系
-    DELETE_RECONCILIATION = "16"  # 删除关系
+    ADD = "0"  # add CIType
+    UPDATE = "1"  # update CIType
+    DELETE = "2"  # delete CIType
+    ADD_ATTRIBUTE = "3"
+    UPDATE_ATTRIBUTE = "4"
+    DELETE_ATTRIBUTE = "5"
+    ADD_TRIGGER = "6"
+    UPDATE_TRIGGER = "7"
+    DELETE_TRIGGER = "8"
+    ADD_UNIQUE_CONSTRAINT = "9"
+    UPDATE_UNIQUE_CONSTRAINT = "10"
+    DELETE_UNIQUE_CONSTRAINT = "11"
+    ADD_RELATION = "12"
+    DELETE_RELATION = "13"
+    ADD_RECONCILIATION = "14"
+    UPDATE_RECONCILIATION = "15"
+    DELETE_RECONCILIATION = "16"
 
 
 class RetKey(BaseEnum):
@@ -93,7 +97,8 @@ class RoleEnum(BaseEnum):
 class AutoDiscoveryType(BaseEnum):
     AGENT = "agent"
     SNMP = "snmp"
-    HTTP = "http"
+    HTTP = "http"  # cloud
+    COMPONENTS = "components"
 
 
 class AttributeDefaultValueEnum(BaseEnum):
@@ -108,12 +113,46 @@ class ExecuteStatusEnum(BaseEnum):
     RUNNING = '2'
 
 
+class RelationSourceEnum(BaseEnum):
+    ATTRIBUTE_VALUES = "0"
+    AUTO_DISCOVERY = "1"
+
+
+class BuiltinModelEnum(BaseEnum):
+    IPAM_SUBNET = "ipam_subnet"
+    IPAM_ADDRESS = "ipam_address"
+    IPAM_SCOPE = "ipam_scope"
+
+    DCIM_REGION = "dcim_region"
+    DCIM_IDC = "dcim_idc"
+    DCIM_SERVER_ROOM = "dcim_server_room"
+    DCIM_RACK = "dcim_rack"
+
+
+BUILTIN_ATTRIBUTES = {
+    "_updated_at": _l("Update Time"),
+    "_updated_by": _l("Updated By"),
+}
+
 CMDB_QUEUE = "one_cmdb_async"
 REDIS_PREFIX_CI = "ONE_CMDB"
 REDIS_PREFIX_CI_RELATION = "CMDB_CI_RELATION"
 REDIS_PREFIX_CI_RELATION2 = "CMDB_CI_RELATION2"
 
-BUILTIN_KEYWORDS = {'id', '_id', 'ci_id', 'type', '_type', 'ci_type'}
+BUILTIN_KEYWORDS = {'id', '_id', 'ci_id', 'type', '_type', 'ci_type', 'ticket_id', *BUILTIN_ATTRIBUTES.keys()}
+
+
+class SysComputedAttributes(object):
+    from api.lib.cmdb.ipam.const import SubnetBuiltinAttributes
+    type2attr = {
+        BuiltinModelEnum.IPAM_SUBNET: {
+            SubnetBuiltinAttributes.HOSTS_COUNT,
+            SubnetBuiltinAttributes.ASSIGN_COUNT,
+            SubnetBuiltinAttributes.USED_COUNT,
+            SubnetBuiltinAttributes.FREE_COUNT
+        }
+    }
+
 
 L_TYPE = None
 L_CI = None

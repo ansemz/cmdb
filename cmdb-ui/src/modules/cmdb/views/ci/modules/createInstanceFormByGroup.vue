@@ -16,24 +16,40 @@
         :key="attr.name + attr_idx"
       >
         <a-form-item :label="attr.alias || attr.name" :colon="false">
+          <CIReferenceAttr
+            v-if="attr.is_reference"
+            :referenceTypeId="attr.reference_type_id"
+            :isList="attr.is_list"
+            v-decorator="[
+              attr.name,
+              {
+                rules: [{ required: attr.is_required, message: $t('placeholder2') + `${attr.alias || attr.name}` }],
+                initialValue: attr.is_list ? [] : ''
+              }
+            ]"
+          />
+          <a-switch
+            v-else-if="attr.is_bool"
+            v-decorator="[
+              attr.name,
+              {
+                rules: [{ required: false }],
+                valuePropName: 'checked',
+                initialValue: attr.default ? Boolean(attr.default.default) : false
+              }
+            ]"
+          />
           <a-select
             :style="{ width: '100%' }"
             v-decorator="[
               attr.name,
               {
                 rules: [{ required: attr.is_required, message: $t('placeholder2') + `${attr.alias || attr.name}` }],
-                initialValue:
-                  attr.default && attr.default.default
-                    ? attr.is_list
-                      ? Array.isArray(attr.default.default)
-                        ? attr.default.default
-                        : attr.default.default.split(',')
-                      : attr.default.default
-                    : attr.is_list ? [] : null,
+                initialValue: getChoiceDefault(attr),
               },
             ]"
             :placeholder="$t('placeholder2')"
-            v-if="attr.is_choice"
+            v-else-if="attr.is_choice"
             :mode="attr.is_list ? 'multiple' : 'default'"
             showSearch
             allowClear
@@ -56,7 +72,9 @@
                     :type="choice[1].icon.name"
                   />
                 </template>
-                {{ choice[0] }}
+                <a-tooltip placement="topLeft" :title="choice[1] ? choice[1].label || choice[0] : choice[0]">
+                  {{ choice[1] ? choice[1].label || choice[0] : choice[0] }}
+                </a-tooltip>
               </span>
             </a-select-option>
           </a-select>
@@ -67,7 +85,7 @@
               attr.name,
               {
                 rules: [{ required: attr.is_required, message: $t('placeholder2') + `${attr.alias || attr.name}` }],
-                initialValue: attr.default && attr.default.default ? attr.default.default : '',
+                initialValue: attr.default && attr.default.default ? Array.isArray(attr.default.default) ? attr.default.default.join(',') : attr.default.default : '',
               },
             ]"
           >
@@ -130,13 +148,16 @@
 </template>
 
 <script>
-import _ from 'lodash'
 import moment from 'moment'
 import JsonEditor from '../../../components/JsonEditor/jsonEditor.vue'
+import CIReferenceAttr from '@/components/ciReferenceAttr/index.vue'
 
 export default {
   name: 'CreateInstanceFormByGroup',
-  components: { JsonEditor },
+  components: {
+    JsonEditor,
+    CIReferenceAttr
+  },
   props: {
     group: {
       type: Object,
@@ -146,6 +167,10 @@ export default {
       type: Array,
       default: () => [],
     },
+    ciTypeId: {
+      type: [Number, String],
+      default: ''
+    }
   },
   inject: ['getFieldType'],
   data() {
@@ -183,6 +208,35 @@ export default {
     jsonEditorOk(jsonData) {
       this.form.setFieldsValue({ [this.editAttr.name]: JSON.stringify(jsonData) })
     },
+
+    getChoiceDefault(attr) {
+      if (!attr?.default?.default) {
+        return attr.is_list ? [] : null
+      }
+
+      if (attr.is_list) {
+        let defaultValue = []
+        if (Array.isArray(attr.default.default)) {
+          defaultValue = attr.default.default
+        } else {
+          defaultValue = String(attr.default.default).split(',')
+        }
+        if (['0', '1', '11'].includes(attr.value_type)) {
+          defaultValue = defaultValue?.map((item) => {
+            const numberValue = Number(item)
+            return Number.isNaN(numberValue) ? item : numberValue
+          })
+        }
+        return defaultValue
+      }
+
+      let defaultValue = attr.default.default
+      if (['0', '1', '11'].includes(attr.value_type)) {
+        const numberValue = Number(defaultValue)
+        defaultValue = Number.isNaN(numberValue) ? attr.default.default : numberValue
+      }
+      return defaultValue
+    }
   },
 }
 </script>

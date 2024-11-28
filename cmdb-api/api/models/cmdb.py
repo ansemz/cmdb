@@ -2,7 +2,6 @@
 
 
 import datetime
-
 from sqlalchemy.dialects.mysql import DOUBLE
 
 from api.extensions import db
@@ -11,6 +10,7 @@ from api.lib.cmdb.const import CIStatusEnum
 from api.lib.cmdb.const import CITypeOperateType
 from api.lib.cmdb.const import ConstraintEnum
 from api.lib.cmdb.const import OperateType
+from api.lib.cmdb.const import RelationSourceEnum
 from api.lib.cmdb.const import ValueTypeEnum
 from api.lib.database import Model
 from api.lib.database import Model2
@@ -105,6 +105,10 @@ class Attribute(Model):
     is_password = db.Column(db.Boolean, default=False)
     is_sortable = db.Column(db.Boolean, default=False)
     is_dynamic = db.Column(db.Boolean, default=False)
+    is_bool = db.Column(db.Boolean, default=False)
+
+    is_reference = db.Column(db.Boolean, default=False)
+    reference_type_id = db.Column(db.Integer, db.ForeignKey('c_ci_types.id'))
 
     default = db.Column(db.JSON)  # {"default": None}
 
@@ -249,6 +253,7 @@ class CI(Model):
     status = db.Column(db.Enum(*CIStatusEnum.all(), name="status"))
     heartbeat = db.Column(db.DateTime, default=lambda: datetime.datetime.now())
     is_auto_discovery = db.Column('a', db.Boolean, default=False)
+    updated_by = db.Column(db.String(64))
 
     ci_type = db.relationship("CIType", backref="c_cis.type_id")
 
@@ -260,6 +265,7 @@ class CIRelation(Model):
     second_ci_id = db.Column(db.Integer, db.ForeignKey("c_cis.id"), nullable=False)
     relation_type_id = db.Column(db.Integer, db.ForeignKey("c_relation_types.id"), nullable=False)
     more = db.Column(db.Integer, db.ForeignKey("c_cis.id"))
+    source = db.Column(db.Enum(*RelationSourceEnum.all()), name="source")
 
     ancestor_ids = db.Column(db.String(128), index=True)
 
@@ -470,6 +476,7 @@ class PreferenceShowAttributes(Model):
     uid = db.Column(db.Integer, index=True, nullable=False)
     type_id = db.Column(db.Integer, db.ForeignKey("c_ci_types.id"), nullable=False)
     attr_id = db.Column(db.Integer, db.ForeignKey("c_attributes.id"))
+    builtin_attr = db.Column(db.String(256), nullable=True)
     order = db.Column(db.SmallInteger, default=0)
     is_fixed = db.Column(db.Boolean, default=False)
 
@@ -529,6 +536,7 @@ class CustomDashboard(Model):
 
     type_id = db.Column(db.Integer, db.ForeignKey('c_ci_types.id'))
     attr_id = db.Column(db.Integer, db.ForeignKey('c_attributes.id'))
+    builtin_attr = db.Column(db.String(256), nullable=True)
     level = db.Column(db.Integer)
 
     options = db.Column(db.JSON)
@@ -566,18 +574,28 @@ class AutoDiscoveryCIType(Model):
 
     attributes = db.Column(db.JSON)  # {ad_key: cmdb_key}
 
-    relation = db.Column(db.JSON)  # [{ad_key: {type_id: x, attr_id: x}}]
+    relation = db.Column(db.JSON)  # [{ad_key: {type_id: x, attr_id: x}}], CMDB > 2.4.5: deprecated
 
     auto_accept = db.Column(db.Boolean, default=False)
 
     agent_id = db.Column(db.String(8), index=True)
     query_expr = db.Column(db.Text)
 
-    interval = db.Column(db.Integer)  # seconds
+    interval = db.Column(db.Integer)  # seconds, > 2.4.5: deprecated
     cron = db.Column(db.String(128))
 
     extra_option = db.Column(db.JSON)
     uid = db.Column(db.Integer, index=True)
+    enabled = db.Column(db.Boolean, default=True)
+
+
+class AutoDiscoveryCITypeRelation(Model):
+    __tablename__ = "c_ad_ci_type_relations"
+
+    ad_type_id = db.Column(db.Integer, db.ForeignKey('c_ci_types.id'), nullable=False)
+    ad_key = db.Column(db.String(128))
+    peer_type_id = db.Column(db.Integer, db.ForeignKey('c_ci_types.id'), nullable=False)
+    peer_attr_id = db.Column(db.Integer, db.ForeignKey('c_attributes.id'), nullable=False)
 
 
 class AutoDiscoveryCI(Model):
@@ -593,6 +611,45 @@ class AutoDiscoveryCI(Model):
     is_accept = db.Column(db.Boolean, default=False)
     accept_by = db.Column(db.String(64), index=True)
     accept_time = db.Column(db.DateTime)
+
+
+class AutoDiscoveryRuleSyncHistory(Model2):
+    __tablename__ = "c_ad_rule_sync_histories"
+
+    adt_id = db.Column(db.Integer, db.ForeignKey('c_ad_ci_types.id'))
+    oneagent_id = db.Column(db.String(8))
+    oneagent_name = db.Column(db.String(64))
+    sync_at = db.Column(db.DateTime, default=datetime.datetime.now())
+
+
+class AutoDiscoveryExecHistory(Model2):
+    __tablename__ = "c_ad_exec_histories"
+
+    type_id = db.Column(db.Integer, index=True)
+    stdout = db.Column(db.Text)
+
+
+class AutoDiscoveryCounter(Model2):
+    __tablename__ = "c_ad_counter"
+
+    type_id = db.Column(db.Integer, index=True)
+    rule_count = db.Column(db.Integer, default=0)
+    exec_target_count = db.Column(db.Integer, default=0)
+    instance_count = db.Column(db.Integer, default=0)
+    accept_count = db.Column(db.Integer, default=0)
+    this_month_count = db.Column(db.Integer, default=0)
+    this_week_count = db.Column(db.Integer, default=0)
+    last_month_count = db.Column(db.Integer, default=0)
+    last_week_count = db.Column(db.Integer, default=0)
+
+
+class AutoDiscoveryAccount(Model):
+    __tablename__ = "c_ad_accounts"
+
+    uid = db.Column(db.Integer, index=True)
+    name = db.Column(db.String(64))
+    adr_id = db.Column(db.Integer, db.ForeignKey('c_ad_rules.id'))
+    config = db.Column(db.JSON)
 
 
 class CIFilterPerms(Model):
@@ -612,3 +669,52 @@ class InnerKV(Model):
 
     key = db.Column(db.String(128), index=True)
     value = db.Column(db.Text)
+
+
+class IPAMSubnetScan(Model):
+    __tablename__ = "c_ipam_subnet_scans"
+
+    ci_id = db.Column(db.Integer, index=True, nullable=False)
+    scan_enabled = db.Column(db.Boolean, default=True)
+    rule_updated_at = db.Column(db.DateTime)
+    last_scan_time = db.Column(db.DateTime)
+
+    # scan rules
+    agent_id = db.Column(db.String(8), index=True)
+    cron = db.Column(db.String(128))
+
+
+class IPAMSubnetScanHistory(Model2):
+    __tablename__ = "c_ipam_subnet_scan_histories"
+
+    subnet_scan_id = db.Column(db.Integer, index=True)
+    exec_id = db.Column(db.String(64), index=True)
+    cidr = db.Column(db.String(18), index=True)
+    start_at = db.Column(db.DateTime)
+    end_at = db.Column(db.DateTime)
+    status = db.Column(db.Integer, default=0)  # 0 is ok
+    stdout = db.Column(db.Text)
+    ip_num = db.Column(db.Integer)
+    ips = db.Column(db.JSON)  # keep only the last 10 records
+
+
+class IPAMOperationHistory(Model2):
+    __tablename__ = "c_ipam_operation_histories"
+
+    from api.lib.cmdb.ipam.const import OperateTypeEnum
+
+    uid = db.Column(db.Integer, index=True)
+    cidr = db.Column(db.String(18), index=True)
+    operate_type = db.Column(db.Enum(*OperateTypeEnum.all()))
+    description = db.Column(db.Text)
+
+
+class DCIMOperationHistory(Model2):
+    __tablename__ = "c_dcim_operation_histories"
+
+    from api.lib.cmdb.dcim.const import OperateTypeEnum
+
+    uid = db.Column(db.Integer, index=True)
+    rack_id = db.Column(db.Integer, index=True)
+    ci_id = db.Column(db.Integer, index=True)
+    operate_type = db.Column(db.Enum(*OperateTypeEnum.all()))

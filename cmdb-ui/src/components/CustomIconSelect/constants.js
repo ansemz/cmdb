@@ -177,7 +177,7 @@ export const linearIconList = [
     }]
   }, {
     value: 'icon-xianxing-application',
-    label: '应用',
+    label: '常用组件',
     list: [{
       value: 'icon-xianxing-yilianjie',
       label: '已连接'
@@ -517,7 +517,7 @@ export const fillIconList = [
     }]
   }, {
     value: 'icon-shidi-application',
-    label: '应用',
+    label: '常用组件',
     list: [{
       value: 'icon-shidi-yilianjie',
       label: '已连接'
@@ -729,6 +729,18 @@ export const multicolorIconList = [
     value: 'database',
     label: '数据库',
     list: [{
+      value: 'caise-TIDB',
+      label: 'TIDB'
+    }, {
+      value: 'caise-dameng',
+      label: '达梦'
+    }, {
+      value: 'caise-kingbase',
+      label: 'KingBase'
+    }, {
+      value: 'caise-TDSQL',
+      label: 'TDSQL'
+    }, {
       value: 'caise-DB2',
       label: 'DB2'
     }, {
@@ -809,6 +821,9 @@ export const multicolorIconList = [
     value: 'system',
     label: '操作系统',
     list: [{
+      value: 'ciase-aix',
+      label: 'aix'
+    }, {
       value: 'caise-Windows',
       label: 'Windows'
     }, {
@@ -903,8 +918,140 @@ export const multicolorIconList = [
     }]
   }, {
     value: 'caise-application',
-    label: '应用',
+    label: '常用组件',
     list: [{
+      value: 'caise-websphere',
+      label: 'WebSphere'
+    }, {
+      value: 'caise-vps',
+      label: 'VPS'
+    }, {
+      value: 'caise-F5',
+      label: 'F5'
+    }, {
+      value: 'caise-HAProxy',
+      label: 'HAProxy'
+    }, {
+      value: 'caise-kafka',
+      label: 'kafka'
+    }, {
+      value: 'caise-dongfangtong',
+      label: '东方通'
+    }, {
+      value: 'cmdb-vcenter',
+      label: 'VCenter'
+    }, {
+      value: 'ops-KVM',
+      label: 'KVM'
+    }, {
+      value: 'caise-JBoss',
+      label: 'JBoss'
+    }, {
+      value: 'caise-weblogic',
+      label: 'WebLogic'
+    }, {
+      value: 'caise-disk_array',
+      label: '磁盘阵列'
+    }, {
+      value: 'caise-fiber',
+      label: '光纤交换机'
+    }, {
+      value: 'caise-bandwidth_line',
+      label: '带宽线路'
+    }, {
+      value: 'caise-pc',
+      label: 'PC'
+    }, {
+      value: 'caise-rack',
+      label: '机柜'
+    }, {
+      value: 'caise-computer_room',
+      label: '机房'
+    }, {
+      value: 'caise-ip_address',
+      label: 'ip地址'
+    }, {
+      value: 'caise_pool',
+      label: 'ip池'
+    }, {
+      value: 'caise-storage_volume1',
+      label: '存储卷'
+    }, {
+      value: 'caise-virtualization',
+      label: '虚拟化'
+    }, {
+      value: 'caise-business',
+      label: '业务'
+    }, {
+      value: 'caise-database',
+      label: '数据库'
+    }, {
+      value: 'caise-middleware',
+      label: '中间件'
+    }, {
+      value: 'caise-websever',
+      label: 'websever'
+    }, {
+      value: 'caise-message_queue',
+      label: '消息队列'
+    }, {
+      value: 'caise-load_balancing',
+      label: '负载均衡'
+    }, {
+      value: 'caise-storage_device',
+      label: '存储设备'
+    }, {
+      value: 'caise-network_devices',
+      label: '网络设备'
+    }, {
+      value: 'caise-computer',
+      label: '计算机'
+    }, {
+      value: 'caise-hardware',
+      label: '硬件设备'
+    }, {
+      value: 'caise-data_center2',
+      label: '数据中心'
+    }, {
+      value: 'caise-hyperV',
+      label: 'hyperV'
+    }, {
+      value: 'caise-IPAM',
+      label: 'IPAM'
+    }, {
+      value: 'caise-system',
+      label: '操作系统'
+    }, {
+      value: 'caise-public_cloud',
+      label: '公有云'
+    }, {
+      value: 'caise-data_center',
+      label: '数据中心'
+    }, {
+      value: 'caise-folder',
+      label: '文件夹'
+    }, {
+      value: 'caise-resource_pool',
+      label: '资源池'
+    }, {
+      value: 'caise-network',
+      label: '网络'
+    }, {
+      value: 'caise-distributed_switch',
+      label: '分布式交换机'
+    }, {
+      value: 'caise-standard_switch',
+      label: '标准式交换机'
+    }, {
+      value: 'caise-host_cluster',
+      label: '主机集群'
+    }, {
+      value: 'caise-storage_cluster',
+      label: '数据存储集群'
+    }, {
+      value: 'caise-data_storage',
+      label: '数据存储'
+    }, {
       value: 'caise-yilianjie',
       label: '已连接'
     }, {

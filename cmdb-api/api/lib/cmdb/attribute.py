@@ -108,7 +108,8 @@ class AttributeManager(object):
             return []
         choice_values = choice_table.get_by(fl=["value", "option"], attr_id=attr_id)
 
-        return [[ValueTypeMap.serialize[value_type](choice_value['value']), choice_value['option']]
+        return [[ValueTypeMap.serialize[value_type](choice_value['value']), choice_value['option'] or
+                 {"label": ValueTypeMap.serialize[value_type](choice_value['value'])}]
                 for choice_value in choice_values]
 
     @staticmethod
@@ -134,6 +135,15 @@ class AttributeManager(object):
 
         choice_table and choice_table.get_by(attr_id=_id, only_query=True).delete()
         db.session.flush()
+
+    @classmethod
+    def get_enum_map(cls, _attr_id, _attr=None):
+        attr = AttributeCache.get(_attr_id) if _attr_id else _attr
+        if attr and attr.is_choice:
+            choice_values = cls.get_choice_values(attr.id, attr.value_type, None, None)
+            return {i[0]: i[1]['label'] for i in choice_values if i[1] and i[1].get('label')}
+
+        return {}
 
     @classmethod
     def search_attributes(cls, name=None, alias=None, page=1, page_size=None):
@@ -167,24 +177,30 @@ class AttributeManager(object):
     def get_attribute_by_name(self, name):
         attr = Attribute.get_by(name=name, first=True)
         if attr.get("is_choice"):
-            attr["choice_value"] = self.get_choice_values(attr["id"], attr["value_type"],
-                                                          attr["choice_web_hook"], attr.get("choice_other"))
+            attr["choice_value"] = self.get_choice_values(attr["id"],
+                                                          attr["value_type"],
+                                                          attr["choice_web_hook"],
+                                                          attr.get("choice_other"))
 
         return attr
 
     def get_attribute_by_alias(self, alias):
         attr = Attribute.get_by(alias=alias, first=True)
         if attr.get("is_choice"):
-            attr["choice_value"] = self.get_choice_values(attr["id"], attr["value_type"],
-                                                          attr["choice_web_hook"], attr.get("choice_other"))
+            attr["choice_value"] = self.get_choice_values(attr["id"],
+                                                          attr["value_type"],
+                                                          attr["choice_web_hook"],
+                                                          attr.get("choice_other"))
 
         return attr
 
     def get_attribute_by_id(self, _id):
         attr = Attribute.get_by_id(_id).to_dict()
         if attr.get("is_choice"):
-            attr["choice_value"] = self.get_choice_values(attr["id"], attr["value_type"],
-                                                          attr["choice_web_hook"], attr.get("choice_other"))
+            attr["choice_value"] = self.get_choice_values(attr["id"],
+                                                          attr["value_type"],
+                                                          attr["choice_web_hook"],
+                                                          attr.get("choice_other"))
 
         return attr
 
@@ -229,7 +245,7 @@ class AttributeManager(object):
         is_choice = True if choice_value or kwargs.get('choice_web_hook') or kwargs.get('choice_other') else False
 
         name = kwargs.pop("name")
-        if name in BUILTIN_KEYWORDS:
+        if name in BUILTIN_KEYWORDS or kwargs.get('alias') in BUILTIN_KEYWORDS:
             return abort(400, ErrFormat.attribute_name_cannot_be_builtin)
 
         while kwargs.get('choice_other'):

@@ -18,7 +18,7 @@
               :disabled="!canEdit[parent.id]"
               @click="
                 () => {
-                  $refs.addTableModal.openModal({ [`${ci.unique}`]: ci[ci.unique] }, ci._id, parent.id, 'parents')
+                  $refs.addTableModal.openModal({ [`${ci.unique}`]: ci[ci.unique] }, ci._id, parent, 'parents')
                 }
               "
             ><a-icon
@@ -38,6 +38,16 @@
             resizable
             class="ops-stripe-table"
           >
+            <template #reference_default="{ row, column }">
+              <a
+                v-for="(id) in (column.params.attr.is_list ? row[column.field] : [row[column.field]])"
+                :key="id"
+                :href="`/cmdb/cidetail/${column.params.attr.reference_type_id}/${id}`"
+                target="_blank"
+              >
+                {{ id }}
+              </a>
+            </template>
             <template #operation_default="{ row }">
               <a-popconfirm
                 arrowPointAtCenter
@@ -66,7 +76,7 @@
               :disabled="!canEdit[child.id]"
               @click="
                 () => {
-                  $refs.addTableModal.openModal({ [`${ci.unique}`]: ci[ci.unique] }, ci._id, child.id, 'children')
+                  $refs.addTableModal.openModal({ [`${ci.unique}`]: ci[ci.unique] }, ci._id, child, 'children')
                 }
               "
             ><a-icon
@@ -85,6 +95,16 @@
             resizable
             class="ops-stripe-table"
           >
+            <template #reference_default="{ row, column }">
+              <a
+                v-for="(id) in (column.params.attr.is_list ? row[column.field] : [row[column.field]])"
+                :key="id"
+                :href="`/cmdb/cidetail/${column.params.attr.reference_type_id}/${id}`"
+                target="_blank"
+              >
+                {{ id }}
+              </a>
+            </template>
             <template #operation_default="{ row }">
               <a-popconfirm
                 arrowPointAtCenter
@@ -132,6 +152,10 @@ export default {
       type: Object,
       default: () => {},
     },
+    initQueryLoading: {
+      type: Boolean,
+      default: false,
+    }
   },
   data() {
     return {
@@ -145,11 +169,260 @@ export default {
       firstCIJsonAttr: {},
       secondCIJsonAttr: {},
       canEdit: {},
+      topoData: {
+        nodes: {},
+        edges: []
+      }
     }
   },
   computed: {
-    topoData() {
+    exsited_ci() {
+      const _exsited_ci = [this.ciId]
+      this.parentCITypes.forEach((parent) => {
+        if (this.firstCIs[parent.name]) {
+          this.firstCIs[parent.name].forEach((parentCi) => {
+            _exsited_ci.push(parentCi._id)
+          })
+        }
+      })
+      this.childCITypes.forEach((child) => {
+        if (this.secondCIs[child.name]) {
+          this.secondCIs[child.name].forEach((childCi) => {
+            _exsited_ci.push(childCi._id)
+          })
+        }
+      })
+      return _exsited_ci
+    },
+  },
+  inject: {
+    attrList: { from: 'attrList' },
+    attributes: { from: 'attributes' },
+    ci_types: { from: 'ci_types' },
+    relationViewRefreshNumber: {
+      from: 'relationViewRefreshNumber',
+      default: () => null,
+    },
+  },
+  mounted() {
+    if (!this.initQueryLoading) {
+      this.init(true)
+    }
+  },
+  methods: {
+    async init(isFirst) {
+      await Promise.all([this.getParentCITypes(), this.getChildCITypes()])
+      Promise.all([this.getFirstCIs(), this.getSecondCIs()]).then(() => {
+        const ci_types_list = this.ci_types()
+        this.handleTopoData()
+        if (
+          isFirst &&
+          this.$refs.ciDetailRelationTopo &&
+          ci_types_list.length
+        ) {
+          this.$refs.ciDetailRelationTopo.exsited_ci = this.exsited_ci
+          this.$refs.ciDetailRelationTopo.setTopoData(this.topoData)
+        }
+      })
+    },
+    async getFirstCIs() {
+      await searchCIRelation(`root_id=${Number(this.ciId)}&level=1&reverse=1&count=10000`)
+        .then((res) => {
+          const firstCIs = {}
+          res.result.forEach((item) => {
+            this.firstCIJsonAttr[item._type].forEach((attr) => {
+              item[`${attr}`] = item[`${attr}`] ? JSON.stringify(item[`${attr}`]) : ''
+            })
+            this.formatCI(item, this.firstCIColumns)
+            if (item.ci_type in firstCIs) {
+              firstCIs[item.ci_type].push(item)
+            } else {
+              firstCIs[item.ci_type] = [item]
+            }
+          })
+          this.firstCIs = firstCIs
+        })
+        .catch((e) => {})
+    },
+    async getSecondCIs() {
+      await searchCIRelation(`root_id=${Number(this.ciId)}&level=1&reverse=0&count=10000`)
+        .then((res) => {
+          const secondCIs = {}
+          res.result.forEach((item) => {
+            this.secondCIJsonAttr[item._type].forEach((attr) => {
+              item[`${attr}`] = item[`${attr}`] ? JSON.stringify(item[`${attr}`]) : ''
+            })
+            this.formatCI(item, this.secondCIColumns)
+            if (item.ci_type in secondCIs) {
+              secondCIs[item.ci_type].push(item)
+            } else {
+              secondCIs[item.ci_type] = [item]
+            }
+          })
+          this.secondCIs = secondCIs
+        })
+        .catch((e) => {})
+    },
+
+    formatCI(ci, columns) {
+      Object.keys(ci).forEach((key) => {
+        const attr = columns?.[ci?._type]?.find((item) => item?.params?.attr?.name === key)?.params?.attr
+        if (attr?.is_choice && attr?.choice_value?.length) {
+          if (attr?.is_list) {
+            ci[key] = ci[key].map((value) => {
+              const label = attr?.choice_value?.find((choice) => choice?.[0] === value)?.[1]?.label
+              return label || ci[key]
+            })
+          } else {
+            const label = attr?.choice_value?.find((choice) => choice?.[0] === ci[key])?.[1]?.label
+            ci[key] = label || ci[key]
+          }
+        }
+      })
+
+      return ci
+    },
+
+    async getParentCITypes() {
+      const res = await getCITypeParent(this.typeId)
+      this.parentCITypes = res.parents
+      for (let i = 0; i < res.parents.length; i++) {
+        await getCanEditByParentIdChildId(res.parents[i].id, this.typeId).then((p_res) => {
+          this.canEdit = {
+            ..._.cloneDeep(this.canEdit),
+            [res.parents[i].id]: p_res.result,
+          }
+        })
+      }
+      const firstCIColumns = {}
+      const firstCIJsonAttr = {}
+      res.parents.forEach((item) => {
+        const columns = []
+        const jsonAttr = []
+        item.attributes.forEach((attr) => {
+          const column = {
+            key: 'p_' + attr.id,
+            field: attr.name,
+            title: attr.alias,
+            minWidth: '100px',
+            params: {
+              attr
+            },
+          }
+          if (attr.is_reference) {
+            column.slots = {
+              default: 'reference_default'
+            }
+          }
+          columns.push(column)
+
+          if (attr.value_type === '6') {
+            jsonAttr.push(attr.name)
+          }
+        })
+        firstCIJsonAttr[item.id] = jsonAttr
+        firstCIColumns[item.id] = columns
+        firstCIColumns[item.id].push({
+          key: 'p_operation',
+          field: 'operation',
+          title: this.$t('operation'),
+          width: '60px',
+          fixed: 'right',
+          slots: {
+            default: 'operation_default',
+          },
+          align: 'center',
+        })
+      })
+
+      this.firstCIColumns = firstCIColumns
+      this.firstCIJsonAttr = firstCIJsonAttr
+    },
+    async getChildCITypes() {
+      const res = await getCITypeChildren(this.typeId)
+
+      this.childCITypes = res.children
+      for (let i = 0; i < res.children.length; i++) {
+        await getCanEditByParentIdChildId(this.typeId, res.children[i].id).then((c_res) => {
+          this.canEdit = {
+            ..._.cloneDeep(this.canEdit),
+            [res.children[i].id]: c_res.result,
+          }
+        })
+      }
+      const secondCIColumns = {}
+      const secondCIJsonAttr = {}
+      res.children.forEach((item) => {
+        const columns = []
+        const jsonAttr = []
+        item.attributes.forEach((attr) => {
+          const column = {
+            key: 'c_' + attr.id,
+            field: attr.name,
+            title: attr.alias,
+            minWidth: '100px',
+            params: {
+              attr
+            },
+          }
+          if (attr.is_reference) {
+            column.slots = {
+              default: 'reference_default'
+            }
+          }
+          columns.push(column)
+
+          if (attr.value_type === '6') {
+            jsonAttr.push(attr.name)
+          }
+        })
+        secondCIJsonAttr[item.id] = jsonAttr
+        secondCIColumns[item.id] = columns
+        secondCIColumns[item.id].push({
+          key: 'c_operation',
+          field: 'operation',
+          title: this.$t('operation'),
+          width: '60px',
+          fixed: 'right',
+          slots: {
+            default: 'operation_default',
+          },
+          align: 'center',
+        })
+      })
+
+      this.secondCIColumns = secondCIColumns
+      this.secondCIJsonAttr = secondCIJsonAttr
+    },
+    reload() {
+      this.init()
+    },
+    deleteRelation(first_ci_id, second_ci_id) {
+      deleteCIRelationView(first_ci_id, second_ci_id).then((res) => {
+        this.init()
+        if (this.relationViewRefreshNumber) {
+          this.relationViewRefreshNumber()
+        }
+      })
+    },
+    handleChangeActiveKey(e) {
+      if (e.target.value === '1') {
+        this.$nextTick(() => {
+          this.$refs.ciDetailRelationTopo.exsited_ci = this.exsited_ci
+          this.$refs.ciDetailRelationTopo.setTopoData(this.topoData)
+        })
+      }
+    },
+    handleTopoData() {
       const ci_types_list = this.ci_types()
+      if (!ci_types_list?.length) {
+        this.$set(this, 'topoData', {
+          nodes: {},
+          edges: []
+        })
+        return
+      }
+
       const _findCiType = ci_types_list.find((item) => item.id === this.typeId)
       const unique_id = _findCiType.show_id || this.attributes().unique_id
       const unique_name = _findCiType.show_name || this.attributes().unique
@@ -266,185 +539,11 @@ export default {
           })
         }
       })
-      return { nodes, edges }
-    },
-    exsited_ci() {
-      const _exsited_ci = [this.ciId]
-      this.parentCITypes.forEach((parent) => {
-        if (this.firstCIs[parent.name]) {
-          this.firstCIs[parent.name].forEach((parentCi) => {
-            _exsited_ci.push(parentCi._id)
-          })
-        }
+      this.$set(this, 'topoData', {
+        nodes,
+        edges
       })
-      this.childCITypes.forEach((child) => {
-        if (this.secondCIs[child.name]) {
-          this.secondCIs[child.name].forEach((childCi) => {
-            _exsited_ci.push(childCi._id)
-          })
-        }
-      })
-      return _exsited_ci
-    },
-  },
-  inject: {
-    attrList: { from: 'attrList' },
-    attributes: { from: 'attributes' },
-    ci_types: { from: 'ci_types' },
-    relationViewRefreshNumber: {
-      from: 'relationViewRefreshNumber',
-      default: () => null,
-    },
-  },
-  mounted() {
-    this.init(true)
-  },
-  methods: {
-    async init(isFirst) {
-      await Promise.all([this.getParentCITypes(), this.getChildCITypes()])
-      Promise.all([this.getFirstCIs(), this.getSecondCIs()]).then(() => {
-        if (isFirst && this.$refs.ciDetailRelationTopo) {
-          this.$refs.ciDetailRelationTopo.exsited_ci = this.exsited_ci
-          this.$refs.ciDetailRelationTopo.setTopoData(this.topoData)
-        }
-      })
-    },
-    async getFirstCIs() {
-      await searchCIRelation(`root_id=${Number(this.ciId)}&&level=1&&reverse=1&&count=10000`)
-        .then((res) => {
-          const firstCIs = {}
-          res.result.forEach((item) => {
-            this.firstCIJsonAttr[item._type].forEach((attr) => {
-              item[`${attr}`] = item[`${attr}`] ? JSON.stringify(item[`${attr}`]) : ''
-            })
-            if (item.ci_type in firstCIs) {
-              firstCIs[item.ci_type].push(item)
-            } else {
-              firstCIs[item.ci_type] = [item]
-            }
-          })
-          this.firstCIs = firstCIs
-        })
-        .catch((e) => {})
-    },
-    async getSecondCIs() {
-      await searchCIRelation(`root_id=${Number(this.ciId)}&&level=1&&reverse=0&&count=10000`)
-        .then((res) => {
-          const secondCIs = {}
-          res.result.forEach((item) => {
-            this.secondCIJsonAttr[item._type].forEach((attr) => {
-              item[`${attr}`] = item[`${attr}`] ? JSON.stringify(item[`${attr}`]) : ''
-            })
-            if (item.ci_type in secondCIs) {
-              secondCIs[item.ci_type].push(item)
-            } else {
-              secondCIs[item.ci_type] = [item]
-            }
-          })
-          this.secondCIs = secondCIs
-        })
-        .catch((e) => {})
-    },
-    async getParentCITypes() {
-      const res = await getCITypeParent(this.typeId)
-      this.parentCITypes = res.parents
-      for (let i = 0; i < res.parents.length; i++) {
-        await getCanEditByParentIdChildId(res.parents[i].id, this.typeId).then((p_res) => {
-          this.canEdit = {
-            ..._.cloneDeep(this.canEdit),
-            [res.parents[i].id]: p_res.result,
-          }
-        })
-      }
-      const firstCIColumns = {}
-      const firstCIJsonAttr = {}
-      res.parents.forEach((item) => {
-        const columns = []
-        const jsonAttr = []
-        item.attributes.forEach((attr) => {
-          columns.push({ key: 'p_' + attr.id, field: attr.name, title: attr.alias, minWidth: '100px' })
-          if (attr.value_type === '6') {
-            jsonAttr.push(attr.name)
-          }
-        })
-        firstCIJsonAttr[item.id] = jsonAttr
-        firstCIColumns[item.id] = columns
-        firstCIColumns[item.id].push({
-          key: 'p_operation',
-          field: 'operation',
-          title: this.$t('operation'),
-          width: '60px',
-          fixed: 'right',
-          slots: {
-            default: 'operation_default',
-          },
-          align: 'center',
-        })
-      })
-
-      this.firstCIColumns = firstCIColumns
-      this.firstCIJsonAttr = firstCIJsonAttr
-    },
-    async getChildCITypes() {
-      const res = await getCITypeChildren(this.typeId)
-
-      this.childCITypes = res.children
-      for (let i = 0; i < res.children.length; i++) {
-        await getCanEditByParentIdChildId(this.typeId, res.children[i].id).then((c_res) => {
-          this.canEdit = {
-            ..._.cloneDeep(this.canEdit),
-            [res.children[i].id]: c_res.result,
-          }
-        })
-      }
-      const secondCIColumns = {}
-      const secondCIJsonAttr = {}
-      res.children.forEach((item) => {
-        const columns = []
-        const jsonAttr = []
-        item.attributes.forEach((attr) => {
-          columns.push({ key: 'c_' + attr.id, field: attr.name, title: attr.alias, minWidth: '100px' })
-          if (attr.value_type === '6') {
-            jsonAttr.push(attr.name)
-          }
-        })
-        secondCIJsonAttr[item.id] = jsonAttr
-        secondCIColumns[item.id] = columns
-        secondCIColumns[item.id].push({
-          key: 'c_operation',
-          field: 'operation',
-          title: this.$t('operation'),
-          width: '60px',
-          fixed: 'right',
-          slots: {
-            default: 'operation_default',
-          },
-          align: 'center',
-        })
-      })
-
-      this.secondCIColumns = secondCIColumns
-      this.secondCIJsonAttr = secondCIJsonAttr
-    },
-    reload() {
-      this.init()
-    },
-    deleteRelation(first_ci_id, second_ci_id) {
-      deleteCIRelationView(first_ci_id, second_ci_id).then((res) => {
-        this.init()
-        if (this.relationViewRefreshNumber) {
-          this.relationViewRefreshNumber()
-        }
-      })
-    },
-    handleChangeActiveKey(e) {
-      if (e.target.value === '1') {
-        this.$nextTick(() => {
-          this.$refs.ciDetailRelationTopo.exsited_ci = this.exsited_ci
-          this.$refs.ciDetailRelationTopo.setTopoData(this.topoData)
-        })
-      }
-    },
+    }
   },
 }
 </script>

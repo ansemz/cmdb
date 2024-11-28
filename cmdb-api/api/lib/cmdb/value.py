@@ -3,13 +3,13 @@
 
 from __future__ import unicode_literals
 
-import copy
 import imp
+
+import copy
+import jinja2
 import os
 import re
 import tempfile
-
-import jinja2
 from flask import abort
 from flask import current_app
 from jinja2schema import infer
@@ -47,7 +47,7 @@ class AttributeValueManager(object):
         """
         return AttributeCache.get(key)
 
-    def get_attr_values(self, fields, ci_id, ret_key="name", unique_key=None, use_master=False):
+    def get_attr_values(self, fields, ci_id, ret_key="name", unique_key=None, use_master=False, enum_map=None):
         """
 
         :param fields:
@@ -55,6 +55,7 @@ class AttributeValueManager(object):
         :param ret_key: It can be name or alias
         :param unique_key: primary attribute
         :param use_master: Only for master-slave read-write separation
+        :param enum_map:
         :return:
         """
         res = dict()
@@ -76,6 +77,12 @@ class AttributeValueManager(object):
             else:
                 res[field_name] = ValueTypeMap.serialize[attr.value_type](rs[0].value) if rs else None
 
+            if enum_map and field_name in enum_map:
+                if attr.is_list:
+                    res[field_name] = [enum_map[field_name].get(i, i) for i in res[field_name]]
+                else:
+                    res[field_name] = enum_map[field_name].get(res[field_name], res[field_name])
+
             if unique_key is not None and attr.id == unique_key.id and rs:
                 res['unique'] = unique_key.name
                 res['unique_alias'] = unique_key.alias
@@ -90,11 +97,13 @@ class AttributeValueManager(object):
         deserialize = ValueTypeMap.deserialize[value_type]
         try:
             v = deserialize(value)
+            if value_type in (ValueTypeEnum.DATE, ValueTypeEnum.DATETIME):
+                return str(v)
             return v
         except ValueDeserializeError as e:
             return abort(400, ErrFormat.attribute_value_invalid2.format(alias, e))
         except ValueError:
-            return abort(400, ErrFormat.attribute_value_invalid.format(value))
+            return abort(400, ErrFormat.attribute_value_invalid2.format(alias, value))
 
     @staticmethod
     def _check_is_choice(attr, value_type, value):
@@ -123,25 +132,31 @@ class AttributeValueManager(object):
             return abort(400, ErrFormat.attribute_value_required.format(attr.alias))
 
     @staticmethod
-    def check_re(expr, value):
+    def check_re(expr, alias, value):
         if not re.compile(expr).match(str(value)):
-            return abort(400, ErrFormat.attribute_value_invalid.format(value))
+            return abort(400, ErrFormat.attribute_value_invalid2.format(alias, value))
 
     def _validate(self, attr, value, value_table, ci=None, type_id=None, ci_id=None, type_attr=None):
-        ci = ci or {}
-        v = self._deserialize_value(attr.alias, attr.value_type, value)
+        if not attr.is_reference:
+            ci = ci or {}
+            v = self._deserialize_value(attr.alias, attr.value_type, value)
 
-        attr.is_choice and value and self._check_is_choice(attr, attr.value_type, v)
+            attr.is_choice and value and self._check_is_choice(attr, attr.value_type, v)
+
+        else:
+            v = value or None
+
         attr.is_unique and self._check_is_unique(
             value_table, attr, ci and ci.id or ci_id, ci and ci.type_id or type_id, v)
-
         self._check_is_required(ci and ci.type_id or type_id, attr, v, type_attr=type_attr)
+        if attr.is_reference:
+            return v
 
         if v == "" and attr.value_type not in (ValueTypeEnum.TEXT,):
             v = None
 
         if attr.re_check and value:
-            self.check_re(attr.re_check, value)
+            self.check_re(attr.re_check, attr.alias, value)
 
         return v
 
@@ -235,10 +250,19 @@ class AttributeValueManager(object):
 
             try:
                 if attr.is_list:
+                    if isinstance(value, dict):
+                        if value.get('op') == "delete":
+                            value['v'] = [ValueTypeMap.serialize[attr.value_type](
+                                self._deserialize_value(attr.alias, attr.value_type, i))
+                                for i in handle_arg_list(value['v'])]
+                            continue
+                        _value = value.get('v') or []
+                    else:
+                        _value = value
                     value_list = [self._validate(attr, i, value_table, ci=None, type_id=type_id, ci_id=ci_id,
                                                  type_attr=ci_attr2type_attr.get(attr.id))
-                                  for i in handle_arg_list(value)]
-                    ci_dict[key] = value_list
+                                  for i in handle_arg_list(_value)]
+                    ci_dict[key] = value_list if not isinstance(value, dict) else dict(op=value.get('op'), v=value_list)
                     if not value_list:
                         self._check_is_required(type_id, attr, '')
 
@@ -278,28 +302,47 @@ class AttributeValueManager(object):
                 existed_values = [(ValueTypeMap.serialize[attr.value_type](i.value) if
                                    i.value or i.value == 0 else i.value) for i in existed_attrs]
 
-                # Comparison array starts from which position changes
-                min_len = min(len(value), len(existed_values))
-                index = 0
-                while index < min_len:
-                    if value[index] != existed_values[index]:
-                        break
-                    index += 1
+                if isinstance(value, dict):
+                    if value.get('op') == "add":
+                        for v in (value.get('v') or []):
+                            if v not in existed_values:
+                                value_table.create(ci_id=ci.id, attr_id=attr.id, value=v, flush=False, commit=False)
+                                if not attr.is_dynamic:
+                                    changed.append((ci.id, attr.id, OperateType.ADD, None, v, ci.type_id))
+                                else:
+                                    has_dynamic = True
 
-                # Delete first and then add to ensure id sorting
-                for idx in range(index, len(existed_attrs)):
-                    existed_attr = existed_attrs[idx]
-                    existed_attr.delete(flush=False, commit=False)
-                    if not attr.is_dynamic:
-                        changed.append((ci.id, attr.id, OperateType.DELETE, existed_values[idx], None, ci.type_id))
-                    else:
-                        has_dynamic = True
-                for idx in range(index, len(value)):
-                    value_table.create(ci_id=ci.id, attr_id=attr.id, value=value[idx], flush=False, commit=False)
-                    if not attr.is_dynamic:
-                        changed.append((ci.id, attr.id, OperateType.ADD, None, value[idx], ci.type_id))
-                    else:
-                        has_dynamic = True
+                    elif value.get('op') == "delete":
+                        for v in (value.get('v') or []):
+                            if v in existed_values:
+                                existed_attrs[existed_values.index(v)].delete(flush=False, commit=False)
+                                if not attr.is_dynamic:
+                                    changed.append((ci.id, attr.id, OperateType.DELETE, v, None, ci.type_id))
+                                else:
+                                    has_dynamic = True
+                else:
+                    # Comparison array starts from which position changes
+                    min_len = min(len(value), len(existed_values))
+                    index = 0
+                    while index < min_len:
+                        if value[index] != existed_values[index]:
+                            break
+                        index += 1
+
+                    # Delete first and then add to ensure id sorting
+                    for idx in range(index, len(existed_attrs)):
+                        existed_attr = existed_attrs[idx]
+                        existed_attr.delete(flush=False, commit=False)
+                        if not attr.is_dynamic:
+                            changed.append((ci.id, attr.id, OperateType.DELETE, existed_values[idx], None, ci.type_id))
+                        else:
+                            has_dynamic = True
+                    for idx in range(index, len(value)):
+                        value_table.create(ci_id=ci.id, attr_id=attr.id, value=value[idx], flush=False, commit=False)
+                        if not attr.is_dynamic:
+                            changed.append((ci.id, attr.id, OperateType.ADD, None, value[idx], ci.type_id))
+                        else:
+                            has_dynamic = True
             else:
                 existed_attr = value_table.get_by(attr_id=attr.id, ci_id=ci.id, first=True, to_dict=False)
                 existed_value = existed_attr and existed_attr.value

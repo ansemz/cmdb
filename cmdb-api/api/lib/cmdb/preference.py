@@ -1,8 +1,8 @@
 # -*- coding:utf-8 -*-
 
+from collections import defaultdict
 
 import copy
-
 import six
 import toposort
 from flask import abort
@@ -16,15 +16,16 @@ from api.lib.cmdb.cache import CITypeAttributesCache
 from api.lib.cmdb.cache import CITypeCache
 from api.lib.cmdb.cache import CMDBCounterCache
 from api.lib.cmdb.ci_type import CITypeAttributeManager
+from api.lib.cmdb.const import BUILTIN_ATTRIBUTES
 from api.lib.cmdb.const import ConstraintEnum
 from api.lib.cmdb.const import PermEnum
 from api.lib.cmdb.const import ResourceTypeEnum
 from api.lib.cmdb.const import RoleEnum
+from api.lib.cmdb.const import SysComputedAttributes
 from api.lib.cmdb.perms import CIFilterPermsCRUD
 from api.lib.cmdb.resp_format import ErrFormat
 from api.lib.exception import AbortException
 from api.lib.perm.acl.acl import ACLManager
-from api.models.cmdb import CITypeAttribute
 from api.models.cmdb import CITypeGroup
 from api.models.cmdb import CITypeGroupItem
 from api.models.cmdb import CITypeRelation
@@ -48,7 +49,7 @@ class PreferenceManager(object):
         type2group = {}
         for i in db.session.query(CITypeGroupItem, CITypeGroup).join(
                 CITypeGroup, CITypeGroup.id == CITypeGroupItem.group_id).filter(
-            CITypeGroup.deleted.is_(False)).filter(CITypeGroupItem.deleted.is_(False)):
+                CITypeGroup.deleted.is_(False)).filter(CITypeGroupItem.deleted.is_(False)):
             type2group[i.CITypeGroupItem.type_id] = i.CITypeGroup.to_dict()
 
         types = db.session.query(PreferenceShowAttributes.type_id).filter(
@@ -132,21 +133,24 @@ class PreferenceManager(object):
 
     @staticmethod
     def get_show_attributes(type_id):
+        _type = CITypeCache.get(type_id) or abort(404, ErrFormat.ci_type_not_found)
+        type_id = _type and _type.id
+
         if not isinstance(type_id, six.integer_types):
             _type = CITypeCache.get(type_id)
             type_id = _type and _type.id
 
-        attrs = db.session.query(PreferenceShowAttributes, CITypeAttribute.order).join(
-            CITypeAttribute, CITypeAttribute.attr_id == PreferenceShowAttributes.attr_id).filter(
-            PreferenceShowAttributes.uid == current_user.uid).filter(
-            PreferenceShowAttributes.type_id == type_id).filter(
-            PreferenceShowAttributes.deleted.is_(False)).filter(CITypeAttribute.deleted.is_(False)).group_by(
-            CITypeAttribute.attr_id).all()
+        attrs = PreferenceShowAttributes.get_by(uid=current_user.uid, type_id=type_id, to_dict=False)
 
         result = []
-        for i in sorted(attrs, key=lambda x: x.PreferenceShowAttributes.order):
-            item = i.PreferenceShowAttributes.attr.to_dict()
-            item.update(dict(is_fixed=i.PreferenceShowAttributes.is_fixed))
+        for i in sorted(attrs, key=lambda x: x.order):
+            if i.attr_id:
+                item = i.attr.to_dict()
+            elif i.builtin_attr:
+                item = dict(name=i.builtin_attr, alias=BUILTIN_ATTRIBUTES[i.builtin_attr])
+            else:
+                item = dict(name="", alias="")
+            item.update(dict(is_fixed=i.is_fixed))
             result.append(item)
 
         is_subscribed = True
@@ -155,12 +159,22 @@ class PreferenceManager(object):
                                                                       choice_web_hook_parse=False,
                                                                       choice_other_parse=False)
             result = [i for i in result if i['default_show']]
+
+            for i in BUILTIN_ATTRIBUTES:
+                result.append(dict(name=i, alias=BUILTIN_ATTRIBUTES[i]))
+
             is_subscribed = False
 
         for i in result:
-            if i["is_choice"]:
+            if i.get("is_choice"):
                 i.update(dict(choice_value=AttributeManager.get_choice_values(
                     i["id"], i["value_type"], i.get("choice_web_hook"), i.get("choice_other"))))
+
+                if (_type.name in SysComputedAttributes.type2attr and
+                        i['name'] in SysComputedAttributes.type2attr[_type.name]):
+                    i['sys_computed'] = True
+                else:
+                    i['sys_computed'] = False
 
         return is_subscribed, result
 
@@ -172,24 +186,34 @@ class PreferenceManager(object):
                 _attr, is_fixed = x
             else:
                 _attr, is_fixed = x, False
-            attr = AttributeCache.get(_attr) or abort(404, ErrFormat.attribute_not_found.format("id={}".format(_attr)))
+
+            if _attr in BUILTIN_ATTRIBUTES:
+                attr = None
+                builtin_attr = _attr
+            else:
+                attr = AttributeCache.get(_attr) or abort(
+                    404, ErrFormat.attribute_not_found.format("id={}".format(_attr)))
+                builtin_attr = None
             existed = PreferenceShowAttributes.get_by(type_id=type_id,
                                                       uid=current_user.uid,
-                                                      attr_id=attr.id,
+                                                      attr_id=attr and attr.id,
+                                                      builtin_attr=builtin_attr,
                                                       first=True,
                                                       to_dict=False)
             if existed is None:
                 PreferenceShowAttributes.create(type_id=type_id,
                                                 uid=current_user.uid,
-                                                attr_id=attr.id,
+                                                attr_id=attr and attr.id,
+                                                builtin_attr=builtin_attr,
                                                 order=order,
                                                 is_fixed=is_fixed)
             else:
                 existed.update(order=order, is_fixed=is_fixed)
 
-        attr_dict = {int(i[0]) if isinstance(i, list) else int(i): j for i, j in attr_order}
+        attr_dict = {(int(i[0]) if i[0].isdigit() else i[0]) if isinstance(i, list) else
+                     (int(i) if i.isdigit() else i): j for i, j in attr_order}
         for i in existed_all:
-            if i.attr_id not in attr_dict:
+            if (i.attr_id and i.attr_id not in attr_dict) or (i.builtin_attr and i.builtin_attr not in attr_dict):
                 i.soft_delete()
 
         if not existed_all and attr_order:
@@ -263,12 +287,12 @@ class PreferenceManager(object):
         else:
             views = _views
 
-        view2cr_ids = dict()
+        view2cr_ids = defaultdict(list)
         name2view = dict()
         result = dict()
         name2id = list()
         for view in views:
-            view2cr_ids.setdefault(view['name'], []).extend(view['cr_ids'])
+            view2cr_ids[view['name']].extend(view['cr_ids'])
             name2id.append([view['name'], view['id']])
             name2view[view['name']] = view
 
@@ -383,14 +407,22 @@ class PreferenceManager(object):
     def add_search_option(**kwargs):
         kwargs['uid'] = current_user.uid
 
-        existed = PreferenceSearchOption.get_by(uid=current_user.uid,
-                                                name=kwargs.get('name'),
-                                                prv_id=kwargs.get('prv_id'),
-                                                ptv_id=kwargs.get('ptv_id'),
-                                                type_id=kwargs.get('type_id'),
-                                                )
-        if existed:
-            return abort(400, ErrFormat.preference_search_option_exists)
+        if kwargs['name'] in ('__recent__', '__favor__', '__relation_favor__'):
+            if kwargs['name'] == '__recent__':
+                for i in PreferenceSearchOption.get_by(
+                        only_query=True, name=kwargs['name'], uid=current_user.uid).order_by(
+                    PreferenceSearchOption.id.desc()).offset(20):
+                    i.delete()
+
+        else:
+            existed = PreferenceSearchOption.get_by(uid=current_user.uid,
+                                                    name=kwargs.get('name'),
+                                                    prv_id=kwargs.get('prv_id'),
+                                                    ptv_id=kwargs.get('ptv_id'),
+                                                    type_id=kwargs.get('type_id'),
+                                                    )
+            if existed:
+                return abort(400, ErrFormat.preference_search_option_exists)
 
         return PreferenceSearchOption.create(**kwargs)
 

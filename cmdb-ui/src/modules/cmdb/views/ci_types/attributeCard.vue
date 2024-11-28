@@ -21,9 +21,7 @@
             <div :class="{ 'attribute-card-name': true, 'attribute-card-name-default-show': property.default_show }">
               {{ property.alias || property.name }}
             </div>
-            <div v-if="property.is_password" class="attribute-card_value-type">{{ $t('cmdb.ciType.password') }}</div>
-            <div v-else-if="property.is_link" class="attribute-card_value-type">{{ $t('cmdb.ciType.link') }}</div>
-            <div v-else class="attribute-card_value-type">{{ valueTypeMap[property.value_type] }}</div>
+            <div class="attribute-card_value-type">{{ valueTypeMap[getPropertyType(property)] }}</div>
           </div>
           <div
             class="attribute-card-trigger"
@@ -74,7 +72,10 @@
                 !isUnique &&
                 !['6'].includes(property.value_type) &&
                 !property.is_password &&
-                !property.is_list
+                !property.is_list &&
+                !property.is_reference &&
+                !property.is_bool &&
+                !(Array.isArray(property.choice_value) ? property.choice_value.length > 0 : false)
             "
             :title="$t(isShowId ? 'cmdb.ciType.cancelSetAsShow' : 'cmdb.ciType.setAsShow')"
           >
@@ -101,6 +102,8 @@ import ValueTypeIcon from '@/components/CMDBValueTypeMapIcon'
 import { valueTypeMap } from '../../utils/const'
 import TriggerForm from './triggerForm.vue'
 import { updateCIType } from '@/modules/cmdb/api/CIType'
+import { getPropertyType } from '../../utils/helper'
+
 export default {
   name: 'AttributeCard',
   inject: {
@@ -191,6 +194,7 @@ export default {
     },
   },
   methods: {
+    getPropertyType,
     handleEdit() {
       this.$emit('edit')
     },
@@ -241,8 +245,8 @@ export default {
 
 <style lang="less" scoped>
 .attribute-card {
-  width: 182px;
-  height: 80px;
+  width: 172px;
+  height: 75px;
   background: @primary-color_6;
   border-radius: 2px;
   position: relative;
@@ -308,7 +312,7 @@ export default {
     }
   }
   .attribute-card-footer {
-    width: 182px;
+    width: 172px;
     height: 30px;
     padding: 0 8px;
     position: absolute;

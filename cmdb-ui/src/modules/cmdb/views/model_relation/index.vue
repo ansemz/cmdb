@@ -24,9 +24,10 @@
             @change="handleSourceTypeChange"
             :filterOption="filterOption"
           >
-            <a-select-option :value="CIType.id" :key="CIType.id" v-for="CIType in displayCITypes">{{
-              CIType.alias || CIType.name
-            }}</a-select-option>
+            <a-select-option :value="CIType.id" :key="CIType.id" v-for="CIType in displayCITypes">
+              {{ CIType.alias || CIType.name }}
+              <span class="model-select-name">({{ CIType.name }})</span>
+            </a-select-option>
           </a-select>
         </a-form-item>
         <a-form-item :label="$t('cmdb.ciType.dstCIType')">
@@ -39,6 +40,7 @@
           >
             <a-select-option :value="CIType.id" :key="CIType.id" v-for="CIType in displayTargetCITypes">
               {{ CIType.alias || CIType.name }}
+              <span class="model-select-name">({{ CIType.name }})</span>
             </a-select-option>
           </a-select>
         </a-form-item>
@@ -129,7 +131,7 @@ import ModelRelationTable from './modules/modelRelationTable.vue'
 import { searchResourceType } from '@/modules/acl/api/resource'
 import { getCITypeGroupsConfig } from '@/modules/cmdb/api/ciTypeGroup'
 import { getCITypes } from '@/modules/cmdb/api/CIType'
-import { createRelation, deleteRelation, getCITypeChildren, getRelationTypes } from '@/modules/cmdb/api/CITypeRelation'
+import { createRelation, deleteRelation, getRelationTypes } from '@/modules/cmdb/api/CITypeRelation'
 import { getCITypeAttributesById } from '@/modules/cmdb/api/CITypeAttr'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -364,8 +366,14 @@ export default {
       return option.componentOptions.children[0].text.toLowerCase().indexOf(input.toLowerCase()) >= 0
     },
     filterAttributes(attributes) {
-      // filter password/json/is_list
-      return attributes.filter((attr) => !attr.is_password && !attr.is_list && attr.value_type !== '6')
+      // filter password/json/is_list/longText/bool/reference
+      return attributes.filter((attr) => {
+        if (attr.value_type === '2' && !attr.is_index) {
+          return false
+        }
+
+        return !attr.is_password && !attr.is_list && attr.value_type !== '6' && !attr.is_bool && !attr.is_reference
+      })
     },
 
     addModalAttr() {
@@ -401,5 +409,10 @@ export default {
 
 .modal-attribute-action {
   margin-left: 5px;
+}
+
+.model-select-name {
+  font-size: 12px;
+  color: #A5A9BC;
 }
 </style>

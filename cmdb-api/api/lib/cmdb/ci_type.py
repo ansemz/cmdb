@@ -1,7 +1,9 @@
 # -*- coding:utf-8 -*-
 
-import copy
+from collections import defaultdict
 
+import copy
+import networkx as nx
 import toposort
 from flask import abort
 from flask import current_app
@@ -15,12 +17,14 @@ from api.lib.cmdb.cache import AttributeCache
 from api.lib.cmdb.cache import CITypeAttributeCache
 from api.lib.cmdb.cache import CITypeAttributesCache
 from api.lib.cmdb.cache import CITypeCache
+from api.lib.cmdb.const import BuiltinModelEnum
 from api.lib.cmdb.const import CITypeOperateType
 from api.lib.cmdb.const import CMDB_QUEUE
 from api.lib.cmdb.const import ConstraintEnum
 from api.lib.cmdb.const import PermEnum
 from api.lib.cmdb.const import ResourceTypeEnum
 from api.lib.cmdb.const import RoleEnum
+from api.lib.cmdb.const import SysComputedAttributes
 from api.lib.cmdb.const import ValueTypeEnum
 from api.lib.cmdb.history import CITypeHistoryManager
 from api.lib.cmdb.perms import CIFilterPermsCRUD
@@ -62,6 +66,7 @@ class CITypeManager(object):
     """
     manage CIType
     """
+
     cls = CIType
 
     def __init__(self):
@@ -84,7 +89,7 @@ class CITypeManager(object):
             self.cls.id, self.cls.icon, self.cls.name).filter(self.cls.deleted.is_(False))}
 
     @staticmethod
-    def get_ci_types(type_name=None, like=True):
+    def get_ci_types(type_name=None, like=True, type_ids=None):
         resources = None
         if current_app.config.get('USE_ACL') and not is_app_admin('cmdb'):
             resources = set([i.get('name') for i in ACLManager().get_resources(ResourceTypeEnum.CI_TYPE)])
@@ -93,6 +98,9 @@ class CITypeManager(object):
             CIType.get_by_like(name=type_name) if like else CIType.get_by(name=type_name))
         res = list()
         for type_dict in ci_types:
+            if type_ids is not None and type_dict['id'] not in type_ids:
+                continue
+
             attr = AttributeCache.get(type_dict["unique_id"])
             type_dict["unique_key"] = attr and attr.name
             if type_dict.get('show_id'):
@@ -143,7 +151,7 @@ class CITypeManager(object):
         kwargs["alias"] = kwargs["name"] if not kwargs.get("alias") else kwargs["alias"]
 
         cls._validate_unique(name=kwargs['name'])
-        cls._validate_unique(alias=kwargs['alias'])
+        # cls._validate_unique(alias=kwargs['alias'])
 
         kwargs["unique_id"] = unique_key.id
         kwargs['uid'] = current_user.uid
@@ -181,8 +189,11 @@ class CITypeManager(object):
 
         ci_type = cls.check_is_existed(type_id)
 
+        if ci_type.name in BuiltinModelEnum.all() and kwargs.get('name', ci_type.name) != ci_type.name:
+            return abort(400, ErrFormat.builtin_type_cannot_update_name)
+
         cls._validate_unique(type_id=type_id, name=kwargs.get('name'))
-        cls._validate_unique(type_id=type_id, alias=kwargs.get('alias') or kwargs.get('name'))
+        # cls._validate_unique(type_id=type_id, alias=kwargs.get('alias') or kwargs.get('name'))
 
         unique_key = kwargs.pop("unique_key", None)
         unique_key = AttributeCache.get(unique_key)
@@ -229,6 +240,13 @@ class CITypeManager(object):
         if CI.get_by(type_id=type_id, first=True, to_dict=False) is not None:
             return abort(400, ErrFormat.ci_exists_and_cannot_delete_type)
 
+        if CITypeInheritance.get_by(parent_id=type_id, first=True):
+            return abort(400, ErrFormat.ci_type_inheritance_cannot_delete)
+
+        reference = Attribute.get_by(reference_type_id=type_id, first=True, to_dict=False)
+        if reference is not None:
+            return abort(400, ErrFormat.ci_type_referenced_cannot_delete.format(reference.alias))
+
         relation_views = PreferenceRelationView.get_by(to_dict=False)
         for rv in relation_views:
             for item in (rv.cr_ids or []):
@@ -253,21 +271,21 @@ class CITypeManager(object):
             item.delete(commit=False)
 
         for item in AutoDiscoveryCITypeRelation.get_by(ad_type_id=type_id, to_dict=False):
-            item.delete(commit=False)
+            item.soft_delete(commit=False)
 
         for item in AutoDiscoveryCITypeRelation.get_by(peer_type_id=type_id, to_dict=False):
-            item.delete(commit=False)
+            item.soft_delete(commit=False)
 
         for item in CITypeInheritance.get_by(parent_id=type_id, to_dict=False):
-            item.delete(commit=False)
+            item.soft_delete(commit=False)
 
         for item in CITypeInheritance.get_by(child_id=type_id, to_dict=False):
-            item.delete(commit=False)
+            item.soft_delete(commit=False)
 
         try:
             from api.models.cmdb import CITypeReconciliation
             for item in CITypeReconciliation.get_by(type_id=type_id, to_dict=False):
-                item.delete(commit=False)
+                item.soft_delete(commit=False)
         except Exception:
             pass
 
@@ -288,6 +306,12 @@ class CITypeManager(object):
 
 class CITypeInheritanceManager(object):
     cls = CITypeInheritance
+
+    @classmethod
+    def get_all(cls, type_ids=None):
+        res = cls.cls.get_by(to_dict=True)
+
+        return [i for i in res if type_ids is None or (i['parent_id'] in type_ids and i['child_id'] in type_ids)]
 
     @classmethod
     def get_parents(cls, type_id):
@@ -332,9 +356,9 @@ class CITypeInheritanceManager(object):
     @classmethod
     def add(cls, parent_ids, child_id):
 
-        rels = {}
+        rels = defaultdict(set)
         for i in cls.cls.get_by(to_dict=False):
-            rels.setdefault(i.child_id, set()).add(i.parent_id)
+            rels[i.child_id].add(i.parent_id)
 
         try:
             toposort_flatten(rels)
@@ -348,7 +372,7 @@ class CITypeInheritanceManager(object):
 
             existed = cls.cls.get_by(parent_id=parent_id, child_id=child_id, first=True, to_dict=False)
             if existed is None:
-                rels.setdefault(child_id, set()).add(parent_id)
+                rels[child_id].add(parent_id)
                 try:
                     toposort_flatten(rels)
                 except toposort.CircularDependencyError as e:
@@ -384,7 +408,7 @@ class CITypeGroupManager(object):
     cls = CITypeGroup
 
     @staticmethod
-    def get(need_other=None, config_required=True):
+    def get(need_other=None, config_required=True, type_ids=None, ci_types=None):
         resources = None
         if current_app.config.get('USE_ACL'):
             resources = ACLManager('cmdb').get_resources(ResourceTypeEnum.CI)
@@ -398,6 +422,8 @@ class CITypeGroupManager(object):
         for group in groups:
             for t in sorted(CITypeGroupItem.get_by(group_id=group['id']), key=lambda x: x['order'] or 0):
                 ci_type = CITypeCache.get(t['type_id']).to_dict()
+                if type_ids is not None and ci_type['id'] not in type_ids:
+                    continue
                 if resources is None or (ci_type and ci_type['name'] in resources):
                     ci_type['permissions'] = resources[ci_type['name']] if resources is not None else None
                     ci_type['inherited'] = True if CITypeInheritanceManager.get_parents(ci_type['id']) else False
@@ -405,7 +431,7 @@ class CITypeGroupManager(object):
                     group_types.add(t["type_id"])
 
         if need_other:
-            ci_types = CITypeManager.get_ci_types()
+            ci_types = CITypeManager.get_ci_types(type_ids=type_ids) if ci_types is None else ci_types
             other_types = dict(ci_types=[])
             for ci_type in ci_types:
                 if ci_type["id"] not in group_types and (resources is None or ci_type['name'] in resources):
@@ -487,14 +513,13 @@ class CITypeAttributeManager(object):
     def __init__(self):
         pass
 
-    @staticmethod
-    def get_attr_name(ci_type_name, key):
+    @classmethod
+    def get_attr_name(cls, ci_type_name, key):
         ci_type = CITypeCache.get(ci_type_name)
         if ci_type is None:
             return
 
-        for i in CITypeAttributesCache.get(ci_type.id):
-            attr = AttributeCache.get(i.attr_id)
+        for _, attr in cls.get_all_attributes(ci_type.id):
             if attr and (attr.name == key or attr.alias == key):
                 return attr.name
 
@@ -506,11 +531,30 @@ class CITypeAttributeManager(object):
         for _type_id in parent_ids + [type_id]:
             result.extend(CITypeAttributesCache.get2(_type_id))
 
-        return result
+        attr_ids = set()
+        result2 = []
+        for i in result:
+            if i[1].id not in attr_ids:
+                result2.append(i)
+                attr_ids.add(i[1].id)
+
+        return result2
 
     @classmethod
     def get_attr_names_by_type_id(cls, type_id):
         return [attr.name for _, attr in cls.get_all_attributes(type_id)]
+
+    @classmethod
+    def get_attr_names_label_enum(cls, type_id):
+        attr_names, enum_map = list(), defaultdict(dict)
+        for _, attr in cls.get_all_attributes(type_id):
+            attr_names.append(attr.name)
+            if attr.is_choice and not attr.choice_other and not attr.choice_web_hook:
+                _map = AttributeManager.get_enum_map(attr.id)
+                if _map:
+                    enum_map[attr.name].update(_map)
+
+        return attr_names, enum_map
 
     @staticmethod
     def get_attributes_by_type_id(type_id, choice_web_hook_parse=True, choice_other_parse=True):
@@ -526,6 +570,8 @@ class CITypeAttributeManager(object):
             attrs = CITypeAttributesCache.get(_type_id)
             for attr in sorted(attrs, key=lambda x: (x.order, x.id)):
                 attr_dict = AttributeManager().get_attribute(attr.attr_id, choice_web_hook_parse, choice_other_parse)
+                if not attr_dict:
+                    continue
                 attr_dict["is_required"] = attr.is_required
                 attr_dict["order"] = attr.order
                 attr_dict["default_show"] = attr.default_show
@@ -534,7 +580,6 @@ class CITypeAttributeManager(object):
                 if not has_config_perm:
                     attr_dict.pop('choice_web_hook', None)
                     attr_dict.pop('choice_other', None)
-
                 if attr_dict['id'] not in id2pos:
                     id2pos[attr_dict['id']] = len(result)
                     result.append(attr_dict)
@@ -551,10 +596,10 @@ class CITypeAttributeManager(object):
                 CITypeManager.get_name_by_id(type_id), ResourceTypeEnum.CI, PermEnum.CONFIG)
 
         result = {type_id: [i for _, i in cls.get_all_attributes(type_id)] for type_id in type_ids}
-        attr2types = {}
+        attr2types = defaultdict(list)
         for type_id in result:
             for i in result[type_id]:
-                attr2types.setdefault(i.id, []).append(type_id)
+                attr2types[i.id].append(type_id)
 
         attrs = []
         for attr_id in attr2types:
@@ -599,7 +644,6 @@ class CITypeAttributeManager(object):
             if existed is not None:
                 continue
 
-            current_app.logger.debug(attr_id)
             CITypeAttribute.create(type_id=type_id, attr_id=attr_id, **kwargs)
 
             attr = AttributeCache.get(attr_id)
@@ -766,11 +810,15 @@ class CITypeRelationManager(object):
     """
 
     @staticmethod
-    def get():
+    def get(type_ids=None):
         res = CITypeRelation.get_by(to_dict=False)
         type2attributes = dict()
+        result = []
         for idx, item in enumerate(res):
             _item = item.to_dict()
+            if type_ids is not None and _item['parent_id'] not in type_ids and _item['child_id'] not in type_ids:
+                continue
+
             res[idx] = _item
             res[idx]['parent'] = item.parent.to_dict()
             if item.parent_id not in type2attributes:
@@ -782,7 +830,9 @@ class CITypeRelationManager(object):
                                                   CITypeAttributeManager.get_all_attributes(item.child_id)]
             res[idx]['relation_type'] = item.relation_type.to_dict()
 
-        return res, type2attributes
+            result.append(res[idx])
+
+        return result, type2attributes
 
     @staticmethod
     def get_child_type_ids(type_id, level):
@@ -803,9 +853,34 @@ class CITypeRelationManager(object):
         return ids
 
     @staticmethod
+    def find_path(source_type_id, target_type_ids):
+        source_type_id = int(source_type_id)
+        target_type_ids = map(int, target_type_ids)
+
+        graph = nx.DiGraph()
+
+        def get_children(_id):
+            children = CITypeRelation.get_by(parent_id=_id, to_dict=False)
+
+            for i in children:
+                if i.child_id != _id:
+                    graph.add_edge(i.parent_id, i.child_id)
+                    get_children(i.child_id)
+
+        get_children(source_type_id)
+
+        paths = list(nx.all_simple_paths(graph, source_type_id, target_type_ids))
+
+        del graph
+
+        return paths
+
+    @staticmethod
     def _wrap_relation_type_dict(type_id, relation_inst):
         ci_type_dict = CITypeCache.get(type_id).to_dict()
         ci_type_dict["ctr_id"] = relation_inst.id
+        show_key = AttributeCache.get(ci_type_dict.get('show_id') or ci_type_dict['unique_id'])
+        ci_type_dict["show_key"] = show_key and show_key.name
         ci_type_dict["attributes"] = CITypeAttributeManager.get_attributes_by_type_id(ci_type_dict["id"])
         attr_filter = CIFilterPermsCRUD.get_attr_filter(type_id)
         if attr_filter:
@@ -827,12 +902,12 @@ class CITypeRelationManager(object):
 
     @classmethod
     def recursive_level2children(cls, parent_id):
-        result = dict()
+        result = defaultdict(list)
 
         def get_children(_id, level):
             children = CITypeRelation.get_by(parent_id=_id, to_dict=False)
             if children:
-                result.setdefault(level + 1, []).extend([i.child.to_dict() for i in children])
+                result[level + 1].extend([i.child.to_dict() for i in children])
 
             for i in children:
                 if i.child_id != _id:
@@ -931,10 +1006,10 @@ class CITypeRelationManager(object):
         p = CITypeManager.check_is_existed(parent)
         c = CITypeManager.check_is_existed(child)
 
-        rels = {}
+        rels = defaultdict(set)
         for i in CITypeRelation.get_by(to_dict=False):
-            rels.setdefault(i.child_id, set()).add(i.parent_id)
-        rels.setdefault(c.id, set()).add(p.id)
+            rels[i.child_id].add(i.parent_id)
+        rels[c.id].add(p.id)
 
         try:
             toposort_flatten(rels)
@@ -974,7 +1049,7 @@ class CITypeRelationManager(object):
         if ((parent_attr_ids and parent_attr_ids != old_parent_attr_ids) or
                 (child_attr_ids and child_attr_ids != old_child_attr_ids)):
             from api.tasks.cmdb import rebuild_relation_for_attribute_changed
-            rebuild_relation_for_attribute_changed.apply_async(args=(existed.to_dict(),))
+            rebuild_relation_for_attribute_changed.apply_async(args=(existed.to_dict(), current_user.uid))
 
         CITypeHistoryManager.add(CITypeOperateType.ADD_RELATION, p.id,
                                  change=dict(parent=p.to_dict(), child=c.to_dict(), relation_type_id=relation_type_id))
@@ -1028,10 +1103,12 @@ class CITypeAttributeGroupManager(object):
 
     @staticmethod
     def get_by_type_id(type_id, need_other=False):
+        _type = CITypeCache.get(type_id) or abort(404, ErrFormat.ci_type_not_found)
         parent_ids = CITypeInheritanceManager.base(type_id)
 
         groups = []
-        id2type = {i: CITypeCache.get(i).alias for i in parent_ids}
+        id2type = {i: CITypeCache.get(i) for i in parent_ids}
+        id2type = {k: v.alias for k, v in id2type.items() if v}
         for _type_id in parent_ids + [type_id]:
             _groups = CITypeAttributeGroup.get_by(type_id=_type_id)
             _groups = sorted(_groups, key=lambda x: x["order"] or 0)
@@ -1075,6 +1152,12 @@ class CITypeAttributeGroupManager(object):
 
                 if i.attr_id in attr2pos:
                     result[attr2pos[i.attr_id][0]]['attributes'].remove(attr2pos[i.attr_id][1])
+
+                if (_type.name in SysComputedAttributes.type2attr and
+                        attr['name'] in SysComputedAttributes.type2attr[_type.name]):
+                    attr['sys_computed'] = True
+                else:
+                    attr['sys_computed'] = False
 
                 attr2pos[i.attr_id] = [group_pos, attr]
 
@@ -1224,17 +1307,16 @@ class CITypeAttributeGroupManager(object):
         if isinstance(_from, int):
             from_group = CITypeAttributeGroup.get_by_id(_from)
         else:
-            from_group = CITypeAttributeGroup.get_by(name=_from, first=True, to_dict=False)
+            from_group = CITypeAttributeGroup.get_by(name=_from, type_id=type_id, first=True, to_dict=False)
         from_group or abort(404, ErrFormat.ci_type_attribute_group_not_found.format("id={}".format(_from)))
 
         if isinstance(_to, int):
             to_group = CITypeAttributeGroup.get_by_id(_to)
         else:
-            to_group = CITypeAttributeGroup.get_by(name=_to, first=True, to_dict=False)
+            to_group = CITypeAttributeGroup.get_by(name=_to, type_id=type_id, first=True, to_dict=False)
         to_group or abort(404, ErrFormat.ci_type_attribute_group_not_found.format("id={}".format(_to)))
 
         from_order, to_order = from_group.order, to_group.order
-
         from_group.update(order=to_order)
         to_group.update(order=from_order)
 
@@ -1304,18 +1386,24 @@ class CITypeTemplateManager(object):
     def _import_attributes(self, type2attributes):
         attributes = [attr for type_id in type2attributes for attr in type2attributes[type_id]]
         attrs = []
+        references = []
         for i in copy.deepcopy(attributes):
+            if i.pop('inherited', None):
+                continue
             i.pop('default_show', None)
             i.pop('is_required', None)
             i.pop('order', None)
             i.pop('choice_web_hook', None)
             i.pop('choice_other', None)
             i.pop('order', None)
-            i.pop('inherited', None)
             i.pop('inherited_from', None)
             choice_value = i.pop('choice_value', None)
             if not choice_value:
                 i['is_choice'] = False
+
+            if i.get('reference_type_id'):
+                references.append(copy.deepcopy(i))
+                i.pop('reference_type_id')
 
             attrs.append((i, choice_value))
 
@@ -1325,18 +1413,24 @@ class CITypeTemplateManager(object):
             if choice_value and not i.get('choice_web_hook') and not i.get('choice_other'):
                 AttributeManager.add_choice_values(attr_id_map.get(i['id'], i['id']), i['value_type'], choice_value)
 
-        return attr_id_map
+        return attr_id_map, references
 
     def _import_ci_types(self, ci_types, attr_id_map):
         for i in ci_types:
             i.pop("unique_key", None)
             i.pop("show_name", None)
+            i.pop("parent_ids", None)
             i['unique_id'] = attr_id_map.get(i['unique_id'], i['unique_id'])
             if i.get('show_id'):
                 i['show_id'] = attr_id_map.get(i['show_id'], i['show_id'])
             i['uid'] = current_user.uid
 
         return self.__import(CIType, ci_types)
+
+    def _import_reference_attributes(self, attrs, type_id_map):
+        for attr in attrs:
+            attr['reference_type_id'] = type_id_map.get(attr['reference_type_id'], attr['reference_type_id'])
+        self.__import(Attribute, attrs)
 
     def _import_ci_type_groups(self, ci_type_groups, type_id_map):
         _ci_type_groups = copy.deepcopy(ci_type_groups)
@@ -1351,6 +1445,10 @@ class CITypeTemplateManager(object):
                 payload = dict(group_id=group_id_map.get(group['id'], group['id']),
                                type_id=type_id_map.get(ci_type['id'], ci_type['id']),
                                order=order)
+                for i in CITypeGroupItem.get_by(type_id=payload['type_id'], to_dict=False):
+                    if i.group_id != payload['group_id']:
+                        i.soft_delete(flush=True)
+
                 existed = CITypeGroupItem.get_by(group_id=payload['group_id'], type_id=payload['type_id'],
                                                  first=True, to_dict=False)
                 if existed is None:
@@ -1368,7 +1466,7 @@ class CITypeTemplateManager(object):
         return self.__import(RelationType, relation_types)
 
     @staticmethod
-    def _import_ci_type_relations(ci_type_relations, type_id_map, relation_type_id_map):
+    def _import_ci_type_relations(ci_type_relations, type_id_map, relation_type_id_map, attr_id_map):
         for i in ci_type_relations:
             i.pop('parent', None)
             i.pop('child', None)
@@ -1378,14 +1476,31 @@ class CITypeTemplateManager(object):
             i['child_id'] = type_id_map.get(i['child_id'], i['child_id'])
             i['relation_type_id'] = relation_type_id_map.get(i['relation_type_id'], i['relation_type_id'])
 
+            i['parent_attr_ids'] = [attr_id_map.get(attr_id, attr_id) for attr_id in i.get('parent_attr_ids') or []]
+            i['child_attr_ids'] = [attr_id_map.get(attr_id, attr_id) for attr_id in i.get('child_attr_ids') or []]
             try:
                 CITypeRelationManager.add(i.get('parent_id'),
                                           i.get('child_id'),
                                           i.get('relation_type_id'),
                                           i.get('constraint'),
+                                          parent_attr_ids=i.get('parent_attr_ids', []),
+                                          child_attr_ids=i.get('child_attr_ids', []),
                                           )
-            except BadRequest:
+            except Exception:
                 pass
+
+    @staticmethod
+    def _import_ci_type_inheritance(ci_type_inheritance, type_id_map):
+
+        for i in ci_type_inheritance:
+            i['parent_id'] = type_id_map.get(i['parent_id'])
+            i['child_id'] = type_id_map.get(i['child_id'])
+
+            if i['parent_id'] and i['child_id']:
+                try:
+                    CITypeInheritanceManager.add([i.get('parent_id')], i.get('child_id'))
+                except BadRequest:
+                    pass
 
     @staticmethod
     def _import_type_attributes(type2attributes, type_id_map, attr_id_map):
@@ -1398,6 +1513,9 @@ class CITypeTemplateManager(object):
 
             handled = set()
             for attr in type2attributes[type_id]:
+                if attr.get('inherited'):
+                    continue
+
                 payload = dict(type_id=type_id_map.get(int(type_id), type_id),
                                attr_id=attr_id_map.get(attr['id'], attr['id']),
                                default_show=attr['default_show'],
@@ -1435,7 +1553,10 @@ class CITypeTemplateManager(object):
                 if existed is None:
                     _group['type_id'] = type_id_map.get(_group['type_id'], _group['type_id'])
 
-                    existed = CITypeAttributeGroup.create(flush=True, **_group)
+                    try:
+                        existed = CITypeAttributeGroup.create(flush=True, **_group)
+                    except:
+                        continue
 
                 for order, attr in enumerate(group['attributes'] or []):
                     item_existed = CITypeAttributeGroupItem.get_by(group_id=existed.id,
@@ -1461,6 +1582,9 @@ class CITypeTemplateManager(object):
 
         for rule in rules:
             ci_type = CITypeCache.get(rule.pop('type_name', None))
+            if ci_type is None:
+                continue
+
             adr = rule.pop('adr', {}) or {}
 
             if ci_type:
@@ -1473,10 +1597,10 @@ class CITypeTemplateManager(object):
 
                 if ad_rule:
                     rule['adr_id'] = ad_rule.id
-                    ad_rule.update(**adr)
+                    ad_rule.update(valid=False, **adr)
 
                 elif adr:
-                    ad_rule = AutoDiscoveryRuleCRUD().add(**adr)
+                    ad_rule = AutoDiscoveryRuleCRUD().add(valid=False, **adr)
                     rule['adr_id'] = ad_rule.id
                 else:
                     continue
@@ -1496,6 +1620,9 @@ class CITypeTemplateManager(object):
                 if ((i.extra_option or {}).get('alias') or None) == (
                         (rule.get('extra_option') or {}).get('alias') or None):
                     existed = True
+                    rule.pop('extra_option', None)
+                    rule.pop('enabled', None)
+                    rule.pop('cron', None)
                     AutoDiscoveryCITypeCRUD().update(i.id, **rule)
                     break
 
@@ -1504,6 +1631,23 @@ class CITypeTemplateManager(object):
                     AutoDiscoveryCITypeCRUD().add(**rule)
                 except Exception as e:
                     current_app.logger.warning("import auto discovery rules failed: {}".format(e))
+
+    @staticmethod
+    def _import_auto_discovery_relation_rules(rules):
+        from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryCITypeRelationCRUD
+
+        for rule in rules:
+            ad_ci_type = CITypeCache.get(rule.pop('ad_type_name', None))
+            peer_ci_type = CITypeCache.get(rule.pop('peer_type_name', None))
+            peer_attr = AttributeCache.get(rule.pop('peer_attr_name', None))
+            if ad_ci_type and peer_attr and peer_ci_type:
+                if not AutoDiscoveryCITypeRelation.get_by(
+                        ad_type_id=ad_ci_type.id, ad_key=rule.get('ad_key'),
+                        peer_attr_id=peer_attr.id, peer_type_id=peer_ci_type.id):
+                    AutoDiscoveryCITypeRelationCRUD().add(ad_type_id=ad_ci_type.id,
+                                                          ad_key=rule.get('ad_key'),
+                                                          peer_attr_id=peer_attr.id,
+                                                          peer_type_id=peer_ci_type.id)
 
     @staticmethod
     def _import_icons(icons):
@@ -1516,14 +1660,18 @@ class CITypeTemplateManager(object):
                     current_app.logger.warning("save icon failed: {}".format(e))
 
     def import_template(self, tpt):
+        db.session.commit()
+
         import time
         s = time.time()
-        attr_id_map = self._import_attributes(tpt.get('type2attributes') or {})
+        attr_id_map, references = self._import_attributes(tpt.get('type2attributes') or {})
         current_app.logger.info('import attributes cost: {}'.format(time.time() - s))
 
         s = time.time()
         ci_type_id_map = self._import_ci_types(tpt.get('ci_types') or [], attr_id_map)
         current_app.logger.info('import ci_types cost: {}'.format(time.time() - s))
+
+        self._import_reference_attributes(references, ci_type_id_map)
 
         s = time.time()
         self._import_ci_type_groups(tpt.get('ci_type_groups') or [], ci_type_id_map)
@@ -1534,8 +1682,13 @@ class CITypeTemplateManager(object):
         current_app.logger.info('import relation_types cost: {}'.format(time.time() - s))
 
         s = time.time()
-        self._import_ci_type_relations(tpt.get('ci_type_relations') or [], ci_type_id_map, relation_type_id_map)
+        self._import_ci_type_relations(tpt.get('ci_type_relations') or [],
+                                       ci_type_id_map, relation_type_id_map, attr_id_map)
         current_app.logger.info('import ci_type_relations cost: {}'.format(time.time() - s))
+
+        s = time.time()
+        self._import_ci_type_inheritance(tpt.get('ci_type_inheritance') or [], ci_type_id_map)
+        current_app.logger.info('import ci_type_inheritance cost: {}'.format(time.time() - s))
 
         s = time.time()
         self._import_type_attributes(tpt.get('type2attributes') or {}, ci_type_id_map, attr_id_map)
@@ -1550,25 +1703,83 @@ class CITypeTemplateManager(object):
         current_app.logger.info('import ci_type_auto_discovery_rules cost: {}'.format(time.time() - s))
 
         s = time.time()
+        self._import_auto_discovery_relation_rules(tpt.get('ci_type_auto_discovery_relation_rules') or [])
+        current_app.logger.info('import ci_type_auto_discovery_relation_rules cost: {}'.format(time.time() - s))
+
+        s = time.time()
         self._import_icons(tpt.get('icons') or {})
         current_app.logger.info('import icons cost: {}'.format(time.time() - s))
 
     @staticmethod
-    def export_template():
+    def export_template(type_ids=None):
         from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryCITypeCRUD
+        from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryCITypeRelationCRUD
         from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryRuleCRUD
         from api.lib.common_setting.upload_file import CommonFileCRUD
 
+        ci_types = CITypeManager.get_ci_types(type_ids=type_ids)
+        extend_type_ids = []
+        for ci_type in ci_types:
+            if ci_type.get('parent_ids'):
+                extend_type_ids.extend(CITypeInheritanceManager.base(ci_type['id']))
+        extend_type_ids = list(set(extend_type_ids) - set(type_ids))
+
+        ci_type_relations = CITypeRelationManager.get(type_ids=type_ids)[0]
+        for i in ci_type_relations:
+            if i['parent_id'] not in type_ids:
+                extend_type_ids.append(i['parent_id'])
+            if i['child_id'] not in type_ids:
+                extend_type_ids.append(i['child_id'])
+
+        ad_relation_rules = AutoDiscoveryCITypeRelationCRUD.get_all(type_ids=type_ids)
+        rules = []
+        for r in ad_relation_rules:
+            if r.peer_type_id not in type_ids:
+                extend_type_ids.append(r.peer_type_id)
+
+            r = r.to_dict()
+            r['ad_type_name'] = CITypeCache.get(r.pop('ad_type_id')).name
+            peer_type_id = r.pop("peer_type_id")
+            peer_type_name = CITypeCache.get(peer_type_id).name
+            if not peer_type_name:
+                peer_type = CITypeCache.get(peer_type_id)
+                peer_type_name = peer_type and peer_type.name
+            r['peer_type_name'] = peer_type_name
+            peer_attr_id = r.pop("peer_attr_id")
+            peer_attr = AttributeCache.get(peer_attr_id)
+            r['peer_attr_name'] = peer_attr and peer_attr.name
+
+            rules.append(r)
+        ci_type_auto_discovery_relation_rules = rules
+
+        if extend_type_ids:
+            extend_type_ids = list(set(extend_type_ids))
+            type_ids.extend(extend_type_ids)
+            ci_types.extend(CITypeManager.get_ci_types(type_ids=extend_type_ids))
+
+        # handle reference type
+        references = Attribute.get_by(only_query=True).join(
+            CITypeAttribute, CITypeAttribute.attr_id == Attribute.id).filter(
+            CITypeAttribute.type_id.in_(type_ids)).filter(CITypeAttribute.deleted.is_(False)).filter(
+            Attribute.reference_type_id.isnot(None))
+        reference_type_ids = list(set([i.reference_type_id for i in references if i.reference_type_id]))
+        if reference_type_ids:
+            type_ids.extend(reference_type_ids)
+            ci_types.extend(CITypeManager.get_ci_types(type_ids=reference_type_ids))
+
         tpt = dict(
-            ci_types=CITypeManager.get_ci_types(),
-            ci_type_groups=CITypeGroupManager.get(),
+            ci_types=ci_types,
             relation_types=[i.to_dict() for i in RelationTypeManager.get_all()],
-            ci_type_relations=CITypeRelationManager.get()[0],
+            ci_type_relations=ci_type_relations,
+            ci_type_inheritance=CITypeInheritanceManager.get_all(type_ids=type_ids),
             ci_type_auto_discovery_rules=list(),
+            ci_type_auto_discovery_relation_rules=ci_type_auto_discovery_relation_rules,
             type2attributes=dict(),
             type2attribute_group=dict(),
             icons=dict()
         )
+        tpt['ci_type_groups'] = CITypeGroupManager.get(ci_types=tpt['ci_types'], type_ids=type_ids)
+        tpt['ci_type_groups'] = [i for i in tpt['ci_type_groups'] if i.get('ci_types')]
 
         def get_icon_value(icon):
             try:
@@ -1576,12 +1787,16 @@ class CITypeTemplateManager(object):
             except:
                 return ""
 
-        ad_rules = AutoDiscoveryCITypeCRUD.get_all()
+        type_id2name = {i['id']: i['name'] for i in tpt['ci_types']}
+        ad_rules = AutoDiscoveryCITypeCRUD.get_all(type_ids=type_ids)
         rules = []
         for r in ad_rules:
             r = r.to_dict()
-            ci_type = CITypeCache.get(r.pop('type_id'))
-            r['type_name'] = ci_type and ci_type.name
+
+            if r.get('extra_option') and '_reference' in r['extra_option']:
+                r['extra_option'].pop('_reference')
+
+            r['type_name'] = type_id2name.get(r.pop('type_id'))
             if r.get('adr_id'):
                 adr = AutoDiscoveryRuleCRUD.get_by_id(r.pop('adr_id'))
                 r['adr_name'] = adr and adr.name
@@ -1593,65 +1808,6 @@ class CITypeTemplateManager(object):
 
             rules.append(r)
 
-        tpt['ci_type_auto_discovery_rules'] = rules
-
-        for ci_type in tpt['ci_types']:
-            if ci_type['icon'] and len(ci_type['icon'].split('$$')) > 3:
-                icon_url = ci_type['icon'].split('$$')[3]
-                if icon_url not in tpt['icons']:
-                    tpt['icons'][icon_url] = get_icon_value(icon_url)
-
-            tpt['type2attributes'][ci_type['id']] = CITypeAttributeManager.get_attributes_by_type_id(
-                ci_type['id'], choice_web_hook_parse=False, choice_other_parse=False)
-
-            for attr in tpt['type2attributes'][ci_type['id']]:
-                for i in (attr.get('choice_value') or []):
-                    if (i[1] or {}).get('icon', {}).get('url') and len(i[1]['icon']['url'].split('$$')) > 3:
-                        icon_url = i[1]['icon']['url'].split('$$')[3]
-                        if icon_url not in tpt['icons']:
-                            tpt['icons'][icon_url] = get_icon_value(icon_url)
-
-            tpt['type2attribute_group'][ci_type['id']] = CITypeAttributeGroupManager.get_by_type_id(ci_type['id'])
-
-        return tpt
-
-    @staticmethod
-    def export_template_by_type(type_id):
-        ci_type = CITypeCache.get(type_id) or abort(404, ErrFormat.ci_type_not_found2.format("id={}".format(type_id)))
-
-        from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryCITypeCRUD
-        from api.lib.cmdb.auto_discovery.auto_discovery import AutoDiscoveryRuleCRUD
-        from api.lib.common_setting.upload_file import CommonFileCRUD
-
-        tpt = dict(
-            ci_types=CITypeManager.get_ci_types(type_name=ci_type.name, like=False),
-            ci_type_auto_discovery_rules=list(),
-            type2attributes=dict(),
-            type2attribute_group=dict(),
-            icons=dict()
-        )
-
-        def get_icon_value(icon):
-            try:
-                return CommonFileCRUD().get_file_binary_str(icon)
-            except:
-                return ""
-
-        ad_rules = AutoDiscoveryCITypeCRUD.get_by_type_id(ci_type.id)
-        rules = []
-        for r in ad_rules:
-            r = r.to_dict()
-            r['type_name'] = ci_type and ci_type.name
-            if r.get('adr_id'):
-                adr = AutoDiscoveryRuleCRUD.get_by_id(r.pop('adr_id'))
-                r['adr_name'] = adr and adr.name
-                r['adr'] = adr and adr.to_dict() or {}
-
-                icon_url = r['adr'].get('option', {}).get('icon', {}).get('url')
-                if icon_url and icon_url not in tpt['icons']:
-                    tpt['icons'][icon_url] = get_icon_value(icon_url)
-
-            rules.append(r)
         tpt['ci_type_auto_discovery_rules'] = rules
 
         for ci_type in tpt['ci_types']:

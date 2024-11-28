@@ -1,6 +1,16 @@
 <template>
-  <CustomDrawer width="800px" :title="title" :visible="visible" @close="handleClose">
-    <template v-if="adType === 'agent'">
+  <CustomDrawer
+    width="800px"
+    :title="title"
+    :visible="visible"
+    :bodyStyle="{ height: 'calc(-108px + 100vh)' }"
+    @close="handleClose"
+  >
+    <AgentTable
+      v-if="adType === DISCOVERY_CATEGORY_TYPE.AGENT"
+      :tableData="tableData"
+    />
+    <template v-else-if="adType === DISCOVERY_CATEGORY_TYPE.PLUGIN">
       <a-form-model
         ref="autoDiscoveryForm"
         :model="form"
@@ -12,11 +22,11 @@
         <a-form-model-item :label="$t('name')" prop="name">
           <a-input v-model="form.name" />
         </a-form-model-item>
-        <a-form-model-item :label="$t('icon')" v-if="is_inner">
+        <a-form-model-item :label="$t('icon')">
           <CustomIconSelect v-model="customIcon" :style="{ marginTop: '6px' }" />
         </a-form-model-item>
         <a-form-model-item :label="$t('cmdb.ad.mode')" prop="is_plugin">
-          <a-radio-group v-model="form.is_plugin" @change="changeIsPlugin" :disabled="!is_inner">
+          <a-radio-group v-model="form.is_plugin" @change="changeIsPlugin" :disabled="true">
             <a-radio :value="false">{{ $t('cmdb.custom_dashboard.default') }}</a-radio>
             <a-radio :value="true">plugin</a-radio>
           </a-radio-group>
@@ -47,8 +57,9 @@
         icon="plus"
         :style="{ marginBottom: '10px' }"
         @click="insertEvent(-1)"
-      >{{ $t('new') }}</a-button
       >
+        {{ $t('new') }}
+      </a-button>
       <vxe-table
         size="mini"
         stripe
@@ -77,7 +88,11 @@
             <vxe-input v-model="row.desc" type="text"></vxe-input>
           </template>
         </vxe-column>
-        <vxe-column :title="$t('operation')" width="60" v-if="!form.is_plugin">
+        <vxe-column
+          :title="$t('operation')"
+          width="60"
+          v-if="!form.is_plugin"
+        >
           <template #default="{ row }">
             <a-space v-if="$refs.xTable.isActiveByRow(row)">
               <a @click="saveRowEvent(row)"><a-icon type="save"/></a>
@@ -97,25 +112,34 @@
       </div>
     </template>
     <template v-else>
-      <HttpSnmpAD ref="httpSnmpAd" :ruleType="adType" :ruleName="ruleData.name" />
+      <HttpSnmpAD ref="httpSnmpAd" :ruleType="adType" :ruleName="ruleName" />
     </template>
   </CustomDrawer>
 </template>
 
 <script>
-import CustomIconSelect from '@/components/CustomIconSelect'
 import { postDiscovery, putDiscovery } from '../../api/discovery'
+import { DISCOVERY_CATEGORY_TYPE } from './constants.js'
+
+import AgentTable from './agentTable.vue'
+import CustomIconSelect from '@/components/CustomIconSelect'
 import HttpSnmpAD from '../../components/httpSnmpAD'
 import CustomCodeMirror from '@/components/CustomCodeMirror'
 import 'codemirror/lib/codemirror.css'
 import 'codemirror/theme/monokai.css'
+
 export default {
   name: 'EditDrawer',
-  components: { CustomIconSelect, CustomCodeMirror, HttpSnmpAD },
+  components: {
+    CustomIconSelect,
+    CustomCodeMirror,
+    HttpSnmpAD,
+    AgentTable
+  },
   props: {
-    is_inner: {
+    isDiscoveryPage: {
       type: Boolean,
-      default: true,
+      default: false,
     },
   },
   data() {
@@ -128,7 +152,7 @@ export default {
       ruleData: {},
       type: 'add',
       adType: '',
-      form: { name: '', is_plugin: false },
+      form: { name: '', is_plugin: true },
       rules: {},
       customIcon: { name: '', color: '' },
       tableData: [],
@@ -142,11 +166,12 @@ export default {
         tabSize: 4,
         lineWrapping: true,
       },
+      DISCOVERY_CATEGORY_TYPE,
     }
   },
   computed: {
     title() {
-      if (this.adType === 'http' || this.adType === 'snmp') {
+      if ([DISCOVERY_CATEGORY_TYPE.HTTP, DISCOVERY_CATEGORY_TYPE.SNMP, DISCOVERY_CATEGORY_TYPE.AGENT, DISCOVERY_CATEGORY_TYPE.PRIVATE_CLOUD, DISCOVERY_CATEGORY_TYPE.COMPONENT].includes(this.adType)) {
         return this.ruleData.name
       }
       if (this.type === 'edit') {
@@ -154,6 +179,9 @@ export default {
       }
       return this.$t('new')
     },
+    ruleName() {
+      return this?.ruleData?.option?.en || this?.ruleData?.name || ''
+    }
   },
   inject: {
     getDiscovery: {
@@ -167,16 +195,19 @@ export default {
       this.type = type
       this.ruleData = data
       this.adType = adType
-      if (!this.is_inner) {
-        this.form = {
-          name: '',
-          is_plugin: true,
-        }
+      this.form = {
+        name: '',
+        is_plugin: true,
       }
-      if (adType === 'http' || adType === 'snmp') {
+      if (adType === DISCOVERY_CATEGORY_TYPE.HTTP || adType === DISCOVERY_CATEGORY_TYPE.SNMP) {
         return
       }
       this.$nextTick(() => {
+        if ([DISCOVERY_CATEGORY_TYPE.HTTP, DISCOVERY_CATEGORY_TYPE.SNMP, DISCOVERY_CATEGORY_TYPE.PRIVATE_CLOUD].includes(adType)) {
+          this.tableData = data?.attributes ?? []
+          return
+        }
+
         if (this.type === 'edit') {
           this.form = {
             name: data.name,
@@ -192,7 +223,7 @@ export default {
           // eslint-disable-next-line no-useless-escape
           this.plugin_script = this.default_plugin_script
         }
-        if (data?.is_plugin || !this.is_inner) {
+        if (this.form?.is_plugin) {
           this.$nextTick(() => {
             this.$refs.codemirror.initCodeMirror(this.plugin_script)
           })
@@ -203,7 +234,7 @@ export default {
       this.tableData = []
       this.customIcon = { name: '', color: '' }
       this.form = { name: '', is_plugin: false }
-      if (this.adType === 'agent') {
+      if (this.adType === DISCOVERY_CATEGORY_TYPE.PLUGIN) {
         this.$refs.autoDiscoveryForm.clearValidate()
       } else {
         // this.$refs.httpSnmpAd.currentCate = ''
@@ -244,10 +275,11 @@ export default {
       const $table = this.$refs.xTable
       const { fullData: _tableData } = $table.getTableData()
       console.log(_tableData)
+      const type = this.adType === DISCOVERY_CATEGORY_TYPE.PLUGIN ? DISCOVERY_CATEGORY_TYPE.AGENT : this.adType
       const params = {
         ...this.form,
-        type: this.adType,
-        is_inner: this.is_inner,
+        type,
+        is_inner: !this.form.is_plugin,
         option: { icon: this.customIcon },
         attributes: this.form.is_plugin
           ? undefined
@@ -267,14 +299,14 @@ export default {
         this.type = 'edit'
         this.ruleData = res
         this.$message.success(this.$t('updateSuccess'))
-        if (this.is_inner) {
+        if (this.isDiscoveryPage) {
           this.getDiscovery()
         }
         return
       }
       this.handleClose()
-      console.log(this.is_inner)
-      if (this.is_inner) {
+
+      if (this.isDiscoveryPage) {
         this.$message.success(this.$t('saveSuccess'))
         this.getDiscovery()
       } else {

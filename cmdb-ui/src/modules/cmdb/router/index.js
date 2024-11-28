@@ -53,8 +53,9 @@ const genCmdbRoutes = async () => {
       {
         path: '/cmdb/resourcesearch',
         name: 'cmdb_resource_search',
+        hidden: true,
         meta: { title: 'cmdb.menu.ciSearch', icon: 'ops-cmdb-search', selectedIcon: 'ops-cmdb-search', keepAlive: false },
-        component: () => import('../views/resource_search/index.vue')
+        component: () => import('../views/resource_search_2/index.vue')
       },
       {
         path: '/cmdb/adc',
@@ -68,6 +69,23 @@ const genCmdbRoutes = async () => {
         hidden: true,
         meta: { title: 'cmdb.menu.cidetail', keepAlive: false },
         component: () => import('../views/ci/ciDetailPage.vue')
+      },
+      {
+        path: '/cmdb/disabled4',
+        name: 'cmdb_disabled4',
+        meta: { title: 'cmdb.menu.scene', appName: 'cmdb', disabled: true, permission: ['admin', 'cmdb_admin'] },
+      },
+      {
+        path: '/cmdb/ipam',
+        component: () => import('../views/ipam'),
+        name: 'cmdb_ipam',
+        meta: { title: 'IPAM', appName: 'cmdb', icon: 'veops-ipam', selectedIcon: 'veops-ipam', keepAlive: false, permission: ['admin', 'cmdb_admin'] }
+      },
+      {
+        path: '/cmdb/dcim',
+        component: () => import('../views/dcim'),
+        name: 'cmdb_dcim',
+        meta: { title: 'cmdb.menu.dcim', appName: 'cmdb', icon: 'veops-data_center', selectedIcon: 'veops-data_center', keepAlive: false, permission: ['cmdb_admin', 'admin'] }
       },
       {
         path: '/cmdb/disabled2',
@@ -102,7 +120,7 @@ const genCmdbRoutes = async () => {
         name: 'cmdb_ci_type',
         component: RouteView,
         redirect: '/cmdb/ci_type',
-        meta: { title: 'cmdb.menu.backendManage', icon: 'setting', permission: ['cmdb_admin', 'OneOPS_Application_Admin', 'admin'], },
+        meta: { title: 'cmdb.menu.backendManage', icon: 'veops-setting2', selectedIcon: 'veops-setting2', permission: ['cmdb_admin', 'OneOPS_Application_Admin', 'admin'], },
         children: [
           {
             path: '/cmdb/customdashboard',
@@ -117,11 +135,10 @@ const genCmdbRoutes = async () => {
             meta: { title: 'cmdb.menu.serviceTreeDefine', keepAlive: false, icon: 'ops-cmdb-preferencerelation', selectedIcon: 'ops-cmdb-preferencerelation-selected' }
           },
           {
-            path: '/cmdb/modelrelation',
-            name: 'model_relation',
-            hideChildrenInMenu: true,
-            component: () => import('../views/model_relation/index'),
-            meta: { title: 'cmdb.menu.citypeRelation', keepAlive: false, icon: 'ops-cmdb-modelrelation', selectedIcon: 'ops-cmdb-modelrelation-selected' }
+            path: '/cmdb/discovery',
+            name: 'discovery',
+            component: () => import('../views/discovery/index'),
+            meta: { title: 'cmdb.menu.ad', keepAlive: false, icon: 'ops-cmdb-adr', selectedIcon: 'ops-cmdb-adr-selected' }
           },
           {
             path: '/cmdb/operationhistory',
@@ -131,18 +148,19 @@ const genCmdbRoutes = async () => {
             meta: { title: 'cmdb.menu.operationHistory', keepAlive: false, icon: 'ops-cmdb-operation', selectedIcon: 'ops-cmdb-operation-selected' }
           },
           {
+            path: '/cmdb/modelrelation',
+            name: 'model_relation',
+            hideChildrenInMenu: true,
+            component: () => import('../views/model_relation/index'),
+            meta: { title: 'cmdb.menu.citypeRelation', keepAlive: false, icon: 'ops-cmdb-modelrelation', selectedIcon: 'ops-cmdb-modelrelation-selected' }
+          },
+          {
             path: '/cmdb/relationtype',
             name: 'relation_type',
             hideChildrenInMenu: true,
             component: () => import('../views/relation_type/index'),
             meta: { title: 'cmdb.menu.relationType', keepAlive: false, icon: 'ops-cmdb-relationtype', selectedIcon: 'ops-cmdb-relationtype-selected' }
-          },
-          {
-            path: '/cmdb/discovery',
-            name: 'discovery',
-            component: () => import('../views/discovery/index'),
-            meta: { title: 'cmdb.menu.ad', keepAlive: false, icon: 'ops-cmdb-adr', selectedIcon: 'ops-cmdb-adr-selected' }
-          },
+          }
         ]
       }
     ]

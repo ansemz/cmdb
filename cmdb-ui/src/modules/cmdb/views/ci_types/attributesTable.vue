@@ -16,21 +16,21 @@
       <a-space style="margin-bottom: 10px">
         <a-button @click="handleAddGroup" size="small" icon="plus">{{ $t('cmdb.ciType.group') }}</a-button>
         <a-button @click="handleOpenUniqueConstraint" size="small">{{ $t('cmdb.ciType.uniqueConstraint') }}</a-button>
-        <div>
+        <div class="ci-types-attributes-flex">
           <a-tooltip
-            v-for="type in Object.keys(valueTypeMap)"
-            :key="type"
-            :title="$t('cmdb.ciType.filterTips', { name: valueTypeMap[type] })"
+            v-for="item in valueTypeMap"
+            :key="item.key"
+            :title="$t('cmdb.ciType.filterTips', { name: item.value })"
           >
             <span
-              @click="handleFilterType(type)"
+              @click="handleFilterType(item.key)"
               :class="{
                 'ci-types-attributes-filter': true,
-                'ci-types-attributes-filter-selected': attrTypeFilter.includes(type),
+                'ci-types-attributes-filter-selected': attrTypeFilter.includes(item.key),
               }"
             >
-              <ops-icon :type="getPropertyIcon({ value_type: type })" />
-              {{ valueTypeMap[type] }}
+              <ops-icon :type="getPropertyIcon({ value_type: item.key })" />
+              {{ item.value }}
             </span>
           </a-tooltip>
         </div>
@@ -104,7 +104,7 @@
             :filter="'.filter-empty'"
             :animation="300"
             tag="div"
-            style="width: 100%; display: flex;flex-flow: wrap"
+            style="width: 100%; display: flex; flex-flow: wrap; column-gap: 10px;"
             handle=".handle"
           >
             <AttributeCard
@@ -146,7 +146,7 @@
             }
           "
           :animation="300"
-          style="min-height: 2rem; width: 100%; display: flex; flex-flow: wrap"
+          style="min-height: 2rem; width: 100%; display: flex; flex-flow: wrap; column-gap: 10px;"
           handle=".handle"
         >
           <AttributeCard
@@ -200,7 +200,7 @@ import AttributeEditForm from './attributeEditForm.vue'
 import NewCiTypeAttrModal from './newCiTypeAttrModal.vue'
 import UniqueConstraint from './uniqueConstraint.vue'
 import { valueTypeMap } from '../../utils/const'
-import { getPropertyIcon } from '../../utils/helper'
+import { getPropertyIcon, getPropertyType } from '../../utils/helper'
 
 export default {
   name: 'AttributesTable',
@@ -233,6 +233,7 @@ export default {
       attrTypeFilter: [],
       unique: '',
       show_id: null,
+      groupMaxCount: {},
     }
   },
   computed: {
@@ -243,7 +244,12 @@ export default {
       return this.$store.state.windowHeight
     },
     valueTypeMap() {
-      return valueTypeMap()
+      const map = valueTypeMap()
+      const keys = ['0', '1', '2', '9', '3', '4', '5', '6', '7', '8', '10', '11']
+      return keys.map((key) => ({
+        key,
+        value: map[key]
+      }))
     },
   },
   provide() {
@@ -255,6 +261,12 @@ export default {
       show_id: () => {
         return this.show_id
       },
+      providerGroupsData: () => {
+        return {
+          CITypeGroups: this.CITypeGroups,
+          otherGroupAttributes: this.otherGroupAttributes
+        }
+      }
     }
   },
   beforeCreate() {},
@@ -329,6 +341,7 @@ export default {
         })
         this.CITypeGroups = values[1]
         this.CITypeGroups.forEach((g) => {
+          this.groupMaxCount[g.name] = g.attributes.filter(a => a.inherited).length
           g.attributes.forEach((a) => {
             a.is_required = (temp[a.id] && temp[a.id].is_required) || false
             a.default_show = (temp[a.id] && temp[a.id].default_show) || false
@@ -464,44 +477,43 @@ export default {
     handleChange(e, group) {
       console.log('changess', group)
       if (e.hasOwnProperty('moved') && e.moved.oldIndex !== e.moved.newIndex) {
-        if (group === -1) {
-          this.$message.error(this.$t('cmdb.ciType.attributeSortedTips'))
+        if (group === -1 || group === null) {
+          this.refreshPage(this.$t('cmdb.ciType.attributeSortedTips'))
+        } else if (e.moved.newIndex < this.groupMaxCount[group]) {
+          this.refreshPage(this.$t('cmdb.ciType.attributeSortedTips2'))
         } else {
           transferCITypeAttrIndex(this.CITypeId, {
             from: { attr_id: e.moved.element.id, group_name: group },
-            to: { order: e.moved.newIndex, group_name: group },
+            to: { order: e.moved.newIndex, group_name: group }
           })
-            .then((res) => this.$message.success(this.$t('updateSuccess')))
-            .catch(() => {
-              this.abortDraggable()
-            })
+            .then(() => this.$message.success(this.$t('updateSuccess')))
+            .catch(() => this.init())
         }
       }
-
       if (e.hasOwnProperty('added')) {
         this.addRemoveGroupFlag = { to: { group_name: group, order: e.added.newIndex }, inited: true }
       }
-
       if (e.hasOwnProperty('removed')) {
         this.$nextTick(() => {
-          transferCITypeAttrIndex(this.CITypeId, {
-            from: { attr_id: e.removed.element.id, group_name: group },
-            to: { group_name: this.addRemoveGroupFlag.to.group_name, order: this.addRemoveGroupFlag.to.order },
-          })
-            .then((res) => this.$message.success(this.$t('saveSuccess')))
-            .catch(() => {
-              this.abortDraggable()
+          if (this.addRemoveGroupFlag.to.order < this.groupMaxCount[this.addRemoveGroupFlag.to.group_name]) {
+            this.refreshPage(this.$t('cmdb.ciType.attributeSortedTips2'))
+          } else {
+            transferCITypeAttrIndex(this.CITypeId, {
+              from: { attr_id: e.removed.element.id, group_name: group },
+              to: { group_name: this.addRemoveGroupFlag.to.group_name, order: this.addRemoveGroupFlag.to.order }
             })
-            .finally(() => {
-              this.addRemoveGroupFlag = {}
-            })
+              .then(() => this.$message.success(this.$t('saveSuccess')))
+              .catch(() => this.init())
+              .finally(() => {
+                this.addRemoveGroupFlag = {}
+              })
+          }
         })
       }
     },
-    abortDraggable() {
-      this.$nextTick(() => {
-        this.$router.push({ name: 'ci_type' })
-      })
+    refreshPage(errorMessage) {
+      this.$message.error(errorMessage)
+      this.init()
     },
     updatePropertyIndex() {
       const attributes = [] // All attributes
@@ -579,26 +591,11 @@ export default {
         if (!attrTypeFilter.length) {
           return true
         } else {
-          if (attrTypeFilter.includes('7') && attr.is_password) {
-            return true
-          }
-          if (attrTypeFilter.includes('8') && attr.is_link) {
-            return true
-          }
-          if (
-            attrTypeFilter.includes(attr.value_type) &&
-            attr.value_type === '2' &&
-            (attr.is_password || attr.is_link)
-          ) {
-            return false
-          }
-          if (attrTypeFilter.includes(attr.value_type)) {
-            return true
-          }
-          return false
+          const valueType = getPropertyType(attr)
+          return attrTypeFilter.includes(valueType)
         }
       })
-    },
+    }
   },
 }
 </script>
@@ -612,6 +609,12 @@ export default {
 .ci-types-attributes {
   padding: 0 20px;
   overflow-y: auto;
+
+  &-flex {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
   .ci-types-attributes-filter {
     color: @text-color_4;
     cursor: pointer;
@@ -645,7 +648,7 @@ export default {
     width: 100%;
     display: flex;
     flex-wrap: wrap;
-    justify-content: space-between;
+    justify-content: flex-start;
     min-height: 20px;
     > i {
       width: 182px;

@@ -1,8 +1,11 @@
 # -*- coding:utf-8 -*-
-import json
-import sys
 from collections import Counter
+from collections import defaultdict
 
+import copy
+import json
+import networkx as nx
+import sys
 from flask import abort
 from flask import current_app
 from flask_login import current_user
@@ -13,6 +16,7 @@ from api.lib.cmdb.cache import CITypeCache
 from api.lib.cmdb.ci import CIRelationManager
 from api.lib.cmdb.ci_type import CITypeRelationManager
 from api.lib.cmdb.const import ConstraintEnum
+from api.lib.cmdb.const import PermEnum
 from api.lib.cmdb.const import REDIS_PREFIX_CI_RELATION
 from api.lib.cmdb.const import REDIS_PREFIX_CI_RELATION2
 from api.lib.cmdb.const import ResourceTypeEnum
@@ -25,10 +29,12 @@ from api.lib.cmdb.utils import ValueTypeMap
 from api.lib.perm.acl.acl import ACLManager
 from api.lib.perm.acl.acl import is_app_admin
 from api.models.cmdb import CI
+from api.models.cmdb import CITypeRelation
+from api.models.cmdb import RelationType
 
 
 class Search(object):
-    def __init__(self, root_id,
+    def __init__(self, root_id=None,
                  level=None,
                  query=None,
                  fl=None,
@@ -58,7 +64,7 @@ class Search(object):
 
         self.ancestor_ids = ancestor_ids
         self.descendant_ids = descendant_ids
-        self.root_parent_path = root_parent_path
+        self.root_parent_path = root_parent_path or []
         self.has_m2m = has_m2m or False
         if not self.has_m2m:
             if self.ancestor_ids:
@@ -385,9 +391,10 @@ class Search(object):
             id2children[str(i)] = item['children']
 
         for lv in range(1, self.level):
+            type_id = type_ids[lv]
 
-            if len(type_ids or []) >= lv and type2filter_perms.get(type_ids[lv]):
-                id_filter_limit, _ = self._get_ci_filter(type2filter_perms[type_ids[lv]])
+            if len(type_ids or []) >= lv and type2filter_perms.get(type_id):
+                id_filter_limit, _ = self._get_ci_filter(type2filter_perms[type_id])
             else:
                 id_filter_limit = {}
 
@@ -395,12 +402,12 @@ class Search(object):
                 key, prefix = [i for i in level_ids], REDIS_PREFIX_CI_RELATION2
             else:
                 key, prefix = [i.split(',')[-1] for i in level_ids], REDIS_PREFIX_CI_RELATION
+            
             res = [json.loads(x).items() for x in [i or '{}' for i in rd.get(key, prefix) or []]]
-            res = [[i for i in x if (not id_filter_limit or (key[idx] not in id_filter_limit or
+            res = [[i for i in x if i[1] == type_id and (not id_filter_limit or (key[idx] not in id_filter_limit or
                                                              int(i[0]) in id_filter_limit[key[idx]]) or
                                      int(i[0]) in id_filter_limit)] for idx, x in enumerate(res)]
             _level_ids = []
-            type_id = type_ids[lv]
             id2name = _get_id2name(type_id)
             for idx, node_path in enumerate(level_ids):
                 for child_id, _ in (res[idx] or []):
@@ -419,3 +426,169 @@ class Search(object):
             level_ids = _level_ids
 
         return result
+
+    @staticmethod
+    def _get_src_ids(src):
+        q = src.get('q') or ''
+        if not q.startswith('_type:'):
+            q = "_type:{},{}".format(src['type_id'], q)
+
+        return SearchFromDB(q, use_ci_filter=True, only_ids=True, count=100000).search()
+
+    @staticmethod
+    def _filter_target_ids(target_ids, type_ids, q):
+        if not q.startswith('_type:'):
+            q = "_type:({}),{}".format(";".join(map(str, type_ids)), q)
+
+        ci_ids = SearchFromDB(q, ci_ids=target_ids, use_ci_filter=True, only_ids=True, count=100000).search()
+        cis = CI.get_by(fl=['id', 'type_id'], only_query=True).filter(CI.id.in_(ci_ids))
+
+        return [(str(i.id), i.type_id) for i in cis]
+
+    @staticmethod
+    def _path2level(src_type_id, target_type_ids, path):
+        if not src_type_id or not target_type_ids:
+            return abort(400, ErrFormat.relation_path_search_src_target_required)
+
+        graph = nx.DiGraph()
+        graph.add_edges_from([(n, _path[idx + 1]) for _path in path for idx, n in enumerate(_path[:-1])])
+        relation_types = defaultdict(dict)
+        level2type = defaultdict(set)
+        type2show_key = dict()
+        for _path in path:
+            for idx, node in enumerate(_path[1:]):
+                level2type[idx + 1].add(node)
+
+                src = CITypeCache.get(_path[idx])
+                target = CITypeCache.get(node)
+                relation_type = RelationType.get_by(only_query=True).join(
+                    CITypeRelation, CITypeRelation.relation_type_id == RelationType.id).filter(
+                    CITypeRelation.parent_id == src.id).filter(CITypeRelation.child_id == target.id).first()
+                relation_types[src.alias].update({target.alias: relation_type.name})
+
+                if src.id not in type2show_key:
+                    type2show_key[src.id] = AttributeCache.get(src.show_id or src.unique_id).name
+                if target.id not in type2show_key:
+                    type2show_key[target.id] = AttributeCache.get(target.show_id or target.unique_id).name
+
+        nodes = graph.nodes()
+
+        return level2type, list(nodes), relation_types, type2show_key
+
+    def _build_graph(self, source_ids, source_type_id, level2type, target_type_ids, acl):
+        type2filter_perms = dict()
+        if not self.is_app_admin:
+            res2 = acl.get_resources(ResourceTypeEnum.CI_FILTER)
+            if res2:
+                type2filter_perms = CIFilterPermsCRUD().get_by_ids(list(map(int, [i['name'] for i in res2])))
+
+        target_type_ids = set(target_type_ids)
+        graph = nx.DiGraph()
+        target_ids = []
+        key = [(str(i), source_type_id) for i in source_ids]
+        graph.add_nodes_from(key)
+        for level in level2type:
+            filter_type_ids = level2type[level]
+            id_filter_limit = dict()
+            for _type_id in filter_type_ids:
+                if type2filter_perms.get(_type_id):
+                    _id_filter_limit, _ = self._get_ci_filter(type2filter_perms[_type_id])
+                    id_filter_limit.update(_id_filter_limit)
+
+            has_target = filter_type_ids & target_type_ids
+
+            res = [json.loads(x).items() for x in [i or '{}' for i in rd.get([i[0] for i in key],
+                                                                             REDIS_PREFIX_CI_RELATION) or []]]
+            _key = []
+            for idx, _id in enumerate(key):
+                valid_targets = [i for i in res[idx] if i[1] in filter_type_ids and
+                                 (not id_filter_limit or int(i[0]) in id_filter_limit)]
+                _key.extend(valid_targets)
+                graph.add_edges_from(zip([_id] * len(valid_targets), valid_targets))
+
+            if has_target:
+                target_ids.extend([j[0] for i in res for j in i if j[1] in target_type_ids])
+
+            key = copy.deepcopy(_key)
+
+        return graph, target_ids
+
+    @staticmethod
+    def _find_paths(graph, source_ids, source_type_id, target_ids, valid_path, max_depth=6):
+        paths = []
+        for source_id in source_ids:
+            _paths = nx.all_simple_paths(graph,
+                                         source=(source_id, source_type_id),
+                                         target=target_ids,
+                                         cutoff=max_depth)
+            for __path in _paths:
+                if tuple([i[1] for i in __path]) in valid_path:
+                    paths.append([i[0] for i in __path])
+
+        return paths
+
+    @staticmethod
+    def _wrap_path_result(paths, types, valid_path, target_types, type2show_key):
+        ci_ids = [j for i in paths for j in i]
+
+        response, _, _, _, _, _ = SearchFromDB("_type:({})".format(";".join(map(str, types))),
+                                               use_ci_filter=False,
+                                               ci_ids=list(map(int, ci_ids)),
+                                               count=1000000).search()
+        id2ci = {str(i.get('_id')): i if i['_type'] in target_types else {
+            type2show_key[i['_type']]: i[type2show_key[i['_type']]],
+            "ci_type_alias": i["ci_type_alias"],
+            "_type": i["_type"],
+        } for i in response}
+
+        result = defaultdict(list)
+        counter = defaultdict(int)
+
+        for path in paths:
+            key = "-".join([id2ci.get(i, {}).get('ci_type_alias') or '' for i in path])
+            if tuple([id2ci.get(i, {}).get('_type') for i in path]) in valid_path:
+                counter[key] += 1
+                result[key].append(path)
+
+        return result, counter, id2ci
+
+    def search_by_path(self, source, target, path):
+        """
+
+        :param source: {type_id: id, q: expr}
+        :param target: {type_ids: [id], q: expr}
+        :param path: [source_type_id, ..., target_type_id], use type id
+        :return:
+        """
+        acl = ACLManager('cmdb')
+        if not self.is_app_admin:
+            res = {i['name'] for i in acl.get_resources(ResourceTypeEnum.CI_TYPE)}
+            for type_id in (source.get('type_id') and [source['type_id']] or []) + (target.get('type_ids') or []):
+                _type = CITypeCache.get(type_id)
+                if _type and _type.name not in res:
+                    return abort(403, ErrFormat.no_permission.format(_type.alias, PermEnum.READ))
+
+        target['type_ids'] = [i[-1] for i in path]
+        level2type, types, relation_types, type2show_key = self._path2level(
+            source.get('type_id'), target.get('type_ids'), path)
+        if not level2type:
+            return [], {}, 0, self.page, 0, {}, {}
+
+        source_ids = self._get_src_ids(source)
+
+        graph, target_ids = self._build_graph(source_ids, source['type_id'], level2type, target['type_ids'], acl)
+        target_ids = self._filter_target_ids(target_ids, target['type_ids'], target.get('q') or '')
+        paths = self._find_paths(graph,
+                                 source_ids,
+                                 source['type_id'],
+                                 set(target_ids),
+                                 {tuple(i): 1 for i in path})
+
+        numfound = len(paths)
+        paths = paths[(self.page - 1) * self.count:self.page * self.count]
+        response, counter, id2ci = self._wrap_path_result(paths,
+                                                          types,
+                                                          {tuple(i): 1 for i in path},
+                                                          set(target.get('type_ids') or []),
+                                                          type2show_key)
+        return response, counter, len(paths), self.page, numfound, id2ci, relation_types, type2show_key
